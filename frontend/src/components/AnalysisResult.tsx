@@ -13,15 +13,18 @@ interface AnalysisResultProps {
 
 function ConfidenceDot({ confidence }: { confidence?: number }) {
   if (confidence === undefined || confidence === null) return null;
+  // Normalize confidence to 0.0 - 1.0 if caller provided 0-100 scale
+  let conf = confidence;
+  if (conf > 1) conf = Math.min(conf / 100, 1);
   let cls = 'confidence-dot ';
-  if (confidence >= 0.8) cls += 'confidence-high';
-  else if (confidence >= 0.5) cls += 'confidence-medium';
+  if (conf >= 0.8) cls += 'confidence-high';
+  else if (conf >= 0.5) cls += 'confidence-medium';
   else cls += 'confidence-low';
   return (
-    <span title={`Confidence: ${(confidence * 100).toFixed(0)}%`}>
+    <span title={`Confidence: ${(conf * 100).toFixed(0)}%`}>
       <span className={cls} />
       <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-        {(confidence * 100).toFixed(0)}%
+        {(conf * 100).toFixed(0)}%
       </span>
     </span>
   );
@@ -39,16 +42,45 @@ function FieldRow({ label, field }: { label: string; field: FieldValue }) {
 
 export function AnalysisResultView({ fixedFields, dynamicFields, specialFields }: AnalysisResultProps) {
   // Unwrap nested structure from LLM response
-  const fixed = fixedFields
+  // Unwrap nested structure from API/LLM and normalize confidences (accept 0..1 or 0..100)
+  const normalizeField = (f: FieldValue | SpecialFieldEntry) => {
+    if (!f) return f;
+    const out = { ...f } as any;
+    if (typeof out.confidence === 'number') {
+      if (out.confidence > 1) out.confidence = Math.min(out.confidence / 100, 1);
+    }
+    return out;
+  };
+
+  const fixedRaw = fixedFields
     ? (fixedFields as { fixed_fields?: Record<string, FieldValue> }).fixed_fields || fixedFields
     : null;
-
-  const dynamic = dynamicFields
-    ? (dynamicFields as { dynamic_fields?: Record<string, Record<string, FieldValue>> }).dynamic_fields || dynamicFields
+  const fixed = fixedRaw
+    ? Object.fromEntries(Object.entries(fixedRaw as Record<string, FieldValue>).map(([k, v]) => [k, normalizeField(v)]))
     : null;
 
-  const special = specialFields
+  const dynamicRaw = dynamicFields
+    ? (dynamicFields as { dynamic_fields?: Record<string, Record<string, FieldValue>> }).dynamic_fields || dynamicFields
+    : null;
+  const dynamic = dynamicRaw
+    ? Object.fromEntries(
+        Object.entries(dynamicRaw as Record<string, Record<string, FieldValue>>).map(([cat, fields]) => [
+          cat,
+          Object.fromEntries(Object.entries(fields || {}).map(([k, v]) => [k, normalizeField(v)])),
+        ])
+      )
+    : null;
+
+  const specialRaw = specialFields
     ? (specialFields as { special_fields?: SpecialFieldsData }).special_fields || (specialFields as SpecialFieldsData)
+    : null;
+  const special = specialRaw
+    ? Object.fromEntries(
+        Object.entries(specialRaw as SpecialFieldsData).map(([supplier, fields]) => [
+          supplier,
+          Object.fromEntries(Object.entries(fields || {}).map(([k, v]) => [k, normalizeField(v)])),
+        ])
+      )
     : null;
 
   return (

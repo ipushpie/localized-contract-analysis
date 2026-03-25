@@ -5,7 +5,13 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
-RUN npm install --include=optional
+# Use `npm ci` when a lockfile is present for reproducible builds,
+# otherwise fall back to `npm install` so builds without a lockfile still work.
+RUN if [ -f package-lock.json ]; then \
+            npm ci --include=optional --no-audit --no-fund; \
+        else \
+            npm install --include=optional --no-audit --no-fund; \
+        fi
 
 COPY prisma ./prisma
 RUN npx prisma generate
@@ -30,7 +36,12 @@ COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
 
 # Install production dependencies
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --include=optional
+# Prefer `npm ci` when possible; otherwise install normally.
+RUN if [ -f package-lock.json ]; then \
+            npm ci --omit=dev --include=optional --no-audit --no-fund; \
+        else \
+            npm install --omit=dev --include=optional --no-audit --no-fund; \
+        fi
 
 # Prisma client
 COPY prisma ./prisma

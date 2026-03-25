@@ -5,6 +5,7 @@ const router = Router();
 
 // POST /documents/:id/analyze — trigger analysis
 router.post('/:id/analyze', analysisController.startAnalysis);
+router.post('/:id/reanalyse', analysisController.reanalyse);
 
 // GET /documents/:id/analysis — get analysis result
 router.get('/:id/analysis', analysisController.getAnalysis);

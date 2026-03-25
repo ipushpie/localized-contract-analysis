@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
-import { fetchDocument, fetchAnalysis, triggerAnalysis, DocumentItem, AnalysisResult } from '@/lib/api';
+import { fetchDocument, fetchAnalysis, triggerAnalysis, reanalyseDocument, DocumentItem, AnalysisResult } from '@/lib/api';
 import { StatusBadge } from '@/components/StatusBadge';
 import { AnalysisResultView } from '@/components/AnalysisResult';
 
@@ -15,6 +15,7 @@ export default function DocumentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [reanalysing, setReanalysing] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -63,6 +64,45 @@ export default function DocumentDetailPage() {
     }
   };
 
+  // Trigger analysis on the backend but do NOT refresh the currently-displayed analysis.
+  const handleReanalyse = async () => {
+    setReanalysing(true);
+    setError(null);
+    try {
+      // Call the reanalyse endpoint which removes previous analysis data then starts fresh analysis.
+      await reanalyseDocument(id);
+      // Immediately clear displayed analysis so UI reflects deletion of previous results.
+      setAnalysis(null);
+
+      // Poll for a new analysis row to appear (status RUNNING or DONE). When found, reload full data.
+      const start = Date.now();
+      const timeoutMs = 120000; // 2 minutes
+      const pollInterval = 2000;
+      let found = false;
+      while (Date.now() - start < timeoutMs) {
+        try {
+          const a = await fetchAnalysis(id);
+          if (a && (a.status === 'RUNNING' || a.status === 'PARTIAL' || a.status === 'DONE' || a.status === 'FAILED')) {
+            found = true;
+            break;
+          }
+        } catch (e) {
+          // fetchAnalysis throws on network error; ignore and retry
+        }
+        // Wait before next poll
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, pollInterval));
+      }
+
+      // If a new analysis was detected, refresh the document+analysis view
+      if (found) await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start reanalysis');
+    } finally {
+      setReanalysing(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="container">
@@ -107,6 +147,16 @@ export default function DocumentDetailPage() {
                 {analyzing ? 'Starting...' : 'Analyze'}
               </button>
             )}
+            {doc.status === 'READY' && analysis && analysis.status === 'DONE' && (
+              <button
+                className="btn btn-secondary"
+                onClick={handleReanalyse}
+                disabled={reanalysing}
+                title="Re-run analysis on the backend (will not refresh current view)"
+              >
+                {reanalysing ? 'Re-starting...' : 'Reanalyse'}
+              </button>
+            )}
           </div>
         </div>
 
@@ -144,13 +194,15 @@ export default function DocumentDetailPage() {
             )}
           </div>
 
+          
+
           {(analysis.status === 'RUNNING' || analysis.status === 'PARTIAL') && (
             <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
               <div className="spinner" style={{ flexShrink: 0 }} />
               <p style={{ color: 'var(--muted)', margin: 0 }}>
                 {analysis.status === 'RUNNING'
-                  ? 'Running analysis passes... results will appear as each pass completes.'
-                  : 'Pass 1 & 2 complete — fetching supplier-specific fields (Pass 3)...'}
+                  ? 'Running pre-analysis across the retrieved chunks, then fixed, supplier-specific, and dynamic extraction passes.'
+                  : 'Pre-analysis, fixed fields, and dynamic fields are available. Supplier-specific extraction is still being finalized.'}
               </p>
             </div>
           )}
@@ -172,7 +224,7 @@ export default function DocumentDetailPage() {
       {/* No analysis yet + document is ready */}
       {!analysis && doc.status === 'READY' && (
         <div className="card empty-state">
-          <p>No analysis yet. Click &quot;Analyze&quot; to start.</p>
+          <p>No analysis yet. Click &quot;Analyze&quot; to run the pre-analysis and staged extraction flow.</p>
         </div>
       )}
     </div>

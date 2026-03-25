@@ -59,13 +59,20 @@ export async function uploadDocument(file: File): Promise<{ id: string }> {
   return res.json();
 }
 
-export async function triggerAnalysis(documentId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/documents/${documentId}/analyze`, {
-    method: 'POST',
-  });
+export async function triggerAnalysis(documentId: string, force = false): Promise<void> {
+  const url = `${API_URL}/documents/${documentId}/analyze${force ? '?force=true' : ''}`;
+  const res = await fetch(url, { method: 'POST' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to start analysis');
+  }
+}
+
+export async function reanalyseDocument(documentId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/documents/${documentId}/reanalyse`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to start reanalysis');
   }
 }
 

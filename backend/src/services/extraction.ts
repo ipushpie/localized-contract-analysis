@@ -5,6 +5,8 @@ import { logger, elapsed } from '../utils/logger';
 
 const TAG = 'Analysis';
 import {
+  PRE_ANALYSIS_QUERY,
+  PRE_ANALYSIS_PROMPT,
   FIXED_QUERY,
   FIXED_PROMPT,
   DYNAMIC_QUERY,
@@ -164,6 +166,7 @@ async function runPass(
        ORDER BY "chunkIndex" ASC`,
       documentId
     );
+    logger.info(TAG, `runPass: includeAllChunks enabled`, { documentId, chunksReturned: chunks.length });
   } else {
     // pgvector cosine similarity search (default) — return top-N chunks
     const limit = options?.chunkLimit ?? (config as any).targetChunks ?? 15;
@@ -176,6 +179,7 @@ async function runPass(
       `[${queryEmbedding.join(',')}]`,
       limit
     );
+    logger.info(TAG, `runPass: top-N chunks selected`, { documentId, requestedLimit: limit, chunksReturned: chunks.length });
   }
 
   if (chunks.length === 0) {
@@ -192,6 +196,31 @@ async function runPass(
     .replace('{currentDate}', currentDate)
     .replace('{exclusionText}', '')
     .replace('{context}', context);
+
+  // Log detailed chunk / prompt metrics for debugging and analysis
+  try {
+    const chunkIds = chunks.map((c) => c.id);
+    const chunkOriginalLengths = chunks.map((c) => String(c.content).length);
+    const chunkTruncatedLengths = chunks.map((c) => Math.min(String(c.content).length, CHUNK_TRUNCATE));
+    const chunkPreviews = chunks.map((c) => String(c.content).slice(0, 200));
+    const contextLength = context.length;
+    const promptLength = prompt.length;
+    logger.info(TAG, 'runPass: prompt prepared', {
+      documentId,
+      includeAll,
+      queryPreview: queryText.slice(0, 120),
+      numChunks: chunks.length,
+      chunkIdsPreview: chunkIds.slice(0, 50),
+      chunkOriginalLengthsPreview: chunkOriginalLengths.slice(0, 50),
+      chunkTruncatedLengthsPreview: chunkTruncatedLengths.slice(0, 50),
+      chunkPreviewsPreview: chunkPreviews.slice(0, 10),
+      chunkTruncate: CHUNK_TRUNCATE,
+      contextLength,
+      promptLength,
+    });
+  } catch (logErr) {
+    logger.warn(TAG, 'runPass: failed to log chunk metrics', { documentId, err: String(logErr) });
+  }
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const raw = await ollamaGenerateWithRetry(prompt, options?.timeoutMs);
@@ -281,29 +310,7 @@ async function runSupplierPass(
 }
 
 async function runCombinedPass(documentId: string): Promise<unknown> {
-  const combinedQuery = `${FIXED_QUERY} ${DYNAMIC_QUERY}`;
-
-  // A concise, unambiguous combined prompt that asks for a single JSON
-  // object containing `fixed_fields` and `dynamic_fields`. Keep the
-  // structure explicit to reduce the model producing explanation text.
-  const combinedPromptTemplate = `You are a contract analysis JSON extraction engine. The current date is {currentDate}.
-
-You MUST respond with ONLY a single valid JSON object and nothing else. The JSON object MUST have exactly two top-level keys: "fixed_fields" and "dynamic_fields".
-
-"fixed_fields" should be an object containing the standard fixed fields (agreement_type, provider, client, product, total_amount, annual_amount, contract_term, start_date, end_date, payment_terms, renewal, termination, governing_law, notice_address). For any missing value, use null. For numeric amounts, use the format "CURRENCY:AMOUNT" where possible.
-
-"dynamic_fields" should be an object or array containing extracted clause summaries (key: short summary or extracted clause text).
-
-Use the following CONTEXT to extract values. If a field cannot be found, set it to null. Do NOT output any explanation, lists, or markdown — return only the JSON object.
-
-Context:
-{context}
-`;
-
-  // Pass the template (with {context}) to runPassWithAutoExpand so it can
-  // insert the actual retrieved chunks as context. The auto-expand helper
-  // will retry with all chunks if the first pass returns mostly empty fields.
-  return runPassWithAutoExpand(documentId, combinedQuery, combinedPromptTemplate);
+  return runPassWithAutoExpand(documentId, PRE_ANALYSIS_QUERY, PRE_ANALYSIS_PROMPT);
 }
 
 const MAX_RETRIES = 2;
