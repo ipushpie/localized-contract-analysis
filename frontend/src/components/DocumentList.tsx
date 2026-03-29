@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { DocumentItem, fetchDocuments, uploadDocument, triggerAnalysis, deleteDocument } from '@/lib/api';
+import { DocumentItem, fetchDocuments, uploadDocuments, triggerAnalysis, deleteDocument } from '@/lib/api';
 import { StatusBadge } from './StatusBadge';
 
 export function DocumentList() {
@@ -35,13 +35,13 @@ export function DocumentList() {
   }, [documents, loadDocuments]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
     setUploading(true);
     setError(null);
     try {
-      await uploadDocument(file);
+      await uploadDocuments(files);
       await loadDocuments();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
@@ -88,6 +88,7 @@ export function DocumentList() {
             ref={fileInputRef}
             type="file"
             accept=".pdf,.docx,.txt"
+            multiple
             onChange={handleUpload}
             style={{ display: 'none' }}
           />

@@ -9,9 +9,14 @@ import {
   PRE_ANALYSIS_PROMPT,
   FIXED_QUERY,
   FIXED_PROMPT,
+  FIXED_PROMPT_FULL,
   DYNAMIC_QUERY,
   DYNAMIC_PROMPT,
+  DYNAMIC_PROMPT_FULL,
   SUPPLIER_PROMPT,
+  SUPPLIER_PROMPT_FULL,
+  SUMMARY_QUERY,
+  SUMMARY_PROMPT_FULL,
 } from './prompts';
 
 // Supplier-specific query strings
@@ -84,7 +89,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
         fixedFields = prior!.fixedFields;
         logger.info(TAG, `Pass 1 skipped — using existing fixedFields`, { documentId });
       } else {
-        const rawFixed = await timedPass('Pass 1 Fixed', () => runPassWithAutoExpand(documentId, FIXED_QUERY, FIXED_PROMPT));
+        const rawFixed = await timedPass('Pass 1 Fixed', () => runPassWithAutoExpand(documentId, FIXED_QUERY, FIXED_PROMPT_FULL));
         const normalizedFixed = normalizeFixedFields(rawFixed);
         fixedFields = normalizedFixed;
         await prisma.documentAnalysis.update({ where: { documentId }, data: { fixedFields: normalizedFixed as any, modelName: config.generationModel } });
@@ -96,7 +101,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
         dynamicFields = prior!.dynamicFields;
         logger.info(TAG, `Pass 2 skipped — using existing dynamicFields`, { documentId });
       } else {
-        const rawDynamic = await timedPass('Pass 2 Dynamic', () => runPassWithAutoExpand(documentId, DYNAMIC_QUERY, DYNAMIC_PROMPT));
+        const rawDynamic = await timedPass('Pass 2 Dynamic', () => runPassWithAutoExpand(documentId, DYNAMIC_QUERY, DYNAMIC_PROMPT_FULL));
         const normalizedDynamic = normalizeDynamicFields(rawDynamic);
         dynamicFields = normalizedDynamic;
         await prisma.documentAnalysis.update({ where: { documentId }, data: { status: Object.keys(normalizedDynamic || {}).length > 0 ? 'PARTIAL' : 'RUNNING', dynamicFields: normalizedDynamic as any } });
@@ -114,6 +119,17 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       );
     } catch (err) {
       logger.warn(TAG, `Pass 3 failed (non-fatal), skipping supplier fields`, { documentId, err: String(err) });
+    }
+
+    // Pass 4: Summary generation (store under analysis.sources.summary)
+    try {
+      logger.info(TAG, `Pass 4 starting — summary generation`, { documentId });
+      const rawSummary = await timedPass('Pass 4 Summary', () => runPassWithAutoExpand(documentId, SUMMARY_QUERY, SUMMARY_PROMPT_FULL));
+      // Save summary under sources.summary
+      await prisma.documentAnalysis.update({ where: { documentId }, data: { sources: { summary: rawSummary } as any } });
+      logger.info(TAG, `Pass 4 summary saved`, { documentId });
+    } catch (err) {
+      logger.warn(TAG, `Pass 4 failed (non-fatal), skipping summary`, { documentId, err: String(err) });
     }
 
     await prisma.documentAnalysis.update({
@@ -302,9 +318,20 @@ async function runSupplierPass(
     logger.warn(TAG, `No supplier query for key, skipping Pass 3`, { key });
     return {};
   }
-  const prompt = SUPPLIER_PROMPT
-    .replace('{SUPPLIER_NAME}', key)
-    .replace('{SUPPLIER_FIELD_LIST}', fieldList);
+  // Build supplier prompt using the FULL supplier template when available.
+  // Replace JavaScript-style placeholders (${mappingType}, ${supplierDisplayName}) and
+  // append the supplier field list so the model knows exactly which fields to extract.
+  let promptTemplate = SUPPLIER_PROMPT_FULL || SUPPLIER_PROMPT;
+  // If FULL template is present, inject mapping values and field list; otherwise fall back to old template.
+  let prompt = '';
+  if (promptTemplate === SUPPLIER_PROMPT_FULL) {
+    prompt = promptTemplate
+      .replace(/\$\{mappingType\}/g, key)
+      .replace(/\$\{supplierDisplayName\}/g, key)
+      + '\n\nSupplier fields:\n' + fieldList;
+  } else {
+    prompt = SUPPLIER_PROMPT.replace('{SUPPLIER_NAME}', key).replace('{SUPPLIER_FIELD_LIST}', fieldList);
+  }
 
   return runPass(documentId, query, prompt);
 }

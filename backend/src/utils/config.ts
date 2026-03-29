@@ -22,4 +22,9 @@ export const config = {
   maxFileSize: 25 * 1024 * 1024, // 25MB
   // Target approximate number of chunks to split each document into
   targetChunks: parseInt(process.env.TARGET_CHUNKS || '15', 10),
+  // OCR settings
+  ocrEnabled: (process.env.OCR_ENABLED || 'true') === 'true',
+  ocrTimeoutMs: parseInt(process.env.OCR_TIMEOUT_MS || '120000', 10),
+  // Auto-start analysis after successful ingestion (default: true)
+  autoAnalyzeOnUpload: (process.env.AUTO_ANALYZE_ON_UPLOAD || 'true') === 'true',
 } as const;

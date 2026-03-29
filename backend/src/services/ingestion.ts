@@ -5,6 +5,14 @@ import { config } from '../utils/config';
 import { prisma } from '../utils/database';
 import { logger, elapsed } from '../utils/logger';
 import crypto from 'crypto';
+import { acquireLock, releaseLock } from '../utils/jobLock';
+import { analyzeDocument } from './extraction';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { execFile as _execFile } from 'child_process';
+import { promisify } from 'util';
+const execFile = promisify(_execFile);
 
 const TAG = 'Ingestion';
 
@@ -28,7 +36,40 @@ export async function ingestDocument(documentId: string): Promise<void> {
     const t1 = Date.now();
     logger.info(TAG, `Extracting text...`, { documentId });
     const result = await extractBytes(new Uint8Array(doc.fileData), doc.mimeType);
-    const rawText = result.content;
+    let rawText = result.content as string | undefined;
+
+    // Log the raw extraction result for debugging when extraction fails
+    try {
+      logger.info(TAG, `Kreuzberg extraction result`, { documentId, resultKeys: Object.keys(result || {}), preview: String(rawText || '').slice(0, 500) });
+    } catch {
+      // Ignore logging errors
+    }
+
+    // If no text found, and OCR is enabled, run ocrmypdf and retry extraction
+    if ((!rawText || rawText.trim().length === 0) && (config as any).ocrEnabled) {
+      const tmpDir = os.tmpdir();
+      const inPath = path.join(tmpDir, `input-${crypto.randomUUID()}.pdf`);
+      const outPath = path.join(tmpDir, `ocr-${crypto.randomUUID()}.pdf`);
+      try {
+        logger.info(TAG, `OCR fallback: writing temp PDF`, { documentId, inPath });
+        await fs.promises.writeFile(inPath, Buffer.from(doc.fileData));
+
+        logger.info(TAG, `OCR fallback: running ocrmypdf`, { documentId });
+        const args = ['--deskew', '--output-type', 'pdf', inPath, outPath];
+        await execFile('ocrmypdf', args, { timeout: (config as any).ocrTimeoutMs });
+
+        logger.info(TAG, `OCR fallback: extracting from OCRed PDF`, { documentId, outPath });
+        const ocrBuf = await fs.promises.readFile(outPath);
+        const ocrResult = await extractBytes(new Uint8Array(ocrBuf), 'application/pdf');
+        rawText = ocrResult.content as string | undefined;
+        logger.info(TAG, `OCR fallback completed`, { documentId, chars: rawText ? rawText.length : 0 });
+      } catch (ocrErr) {
+        logger.warn(TAG, `OCR fallback failed`, { documentId, error: String(ocrErr) });
+      } finally {
+        try { await fs.promises.unlink(inPath); } catch {}
+        try { await fs.promises.unlink(outPath); } catch {}
+      }
+    }
 
     if (!rawText || rawText.trim().length === 0) {
       throw new Error('No text could be extracted from the document');
@@ -108,6 +149,23 @@ export async function ingestDocument(documentId: string): Promise<void> {
       where: { id: documentId },
       data: { status: 'READY', progress: 100 },
     });
+
+    // Optionally trigger automatic analysis after ingestion completes
+    try {
+      if ((config as any).ocrEnabled && (config as any).ocrEnabled !== undefined) {
+        // noop: config already used above
+      }
+      if ((config as any).autoAnalyzeOnUpload) {
+        logger.info(TAG, `Auto-triggering analysis`, { documentId });
+        if (acquireLock(`analysis:${documentId}`)) {
+          void analyzeDocument(documentId).finally(() => releaseLock(`analysis:${documentId}`));
+        } else {
+          logger.warn(TAG, `Auto-analysis skipped — analysis already running`, { documentId });
+        }
+      }
+    } catch (e) {
+      logger.warn(TAG, `Failed to auto-trigger analysis`, { documentId, error: String(e) });
+    }
 
     logger.info(TAG, `Complete`, { documentId, totalChunks, totalElapsed: elapsed(t0) });
   } catch (err) {

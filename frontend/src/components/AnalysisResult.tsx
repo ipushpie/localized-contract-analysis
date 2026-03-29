@@ -1,6 +1,6 @@
 'use client';
 
-import { FieldValue, SpecialFieldEntry, SpecialFieldsData } from '@/lib/api';
+import { FieldValue, SpecialFieldEntry, SpecialFieldsData, Summary } from '@/lib/api';
 
 interface AnalysisResultProps {
   fixedFields: Record<string, FieldValue> | { fixed_fields: Record<string, FieldValue> } | null;
@@ -9,6 +9,7 @@ interface AnalysisResultProps {
     | { dynamic_fields: Record<string, Record<string, FieldValue>> }
     | null;
   specialFields: SpecialFieldsData | { special_fields: SpecialFieldsData } | null;
+  summary?: Summary | { summary: Summary } | null;
 }
 
 function ConfidenceDot({ confidence }: { confidence?: number }) {
@@ -81,6 +82,11 @@ export function AnalysisResultView({ fixedFields, dynamicFields, specialFields }
           Object.fromEntries(Object.entries(fields || {}).map(([k, v]) => [k, normalizeField(v)])),
         ])
       )
+    : null;
+
+  // Summary
+  const summaryRaw = (arguments[0] as any).summary
+    ? ((arguments[0] as any).summary.summary || (arguments[0] as any).summary)
     : null;
 
   return (
@@ -169,6 +175,92 @@ export function AnalysisResultView({ fixedFields, dynamicFields, specialFields }
             <p>No analysis results available.</p>
           </div>
         )}
+
+      {/* Summary */}
+      {summaryRaw && (
+        <div className="card">
+          <h2>Summary</h2>
+          {summaryRaw.narrativeSummary && (
+            <div style={{ marginBottom: '0.75rem' }}>
+              <p style={{ margin: 0 }}>{summaryRaw.narrativeSummary}</p>
+            </div>
+          )}
+
+          {summaryRaw.coreIdentification && Object.keys(summaryRaw.coreIdentification).length > 0 && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <h3>Core Identification</h3>
+              {Object.entries(summaryRaw.coreIdentification).map(([k, v]) => (
+                <div key={k} className="field-grid" style={{ padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
+                  <div className="field-label">{k.replace(/_/g, ' ')}</div>
+                  <div className="field-value">{typeof v === 'string' ? v : JSON.stringify(v)}</div>
+                  <div />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {summaryRaw.termAndDates && Object.keys(summaryRaw.termAndDates).length > 0 && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <h3>Term & Dates</h3>
+              {Object.entries(summaryRaw.termAndDates).map(([k, v]) => (
+                <div key={k} className="field-grid" style={{ padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
+                  <div className="field-label">{k.replace(/_/g, ' ')}</div>
+                  <div className="field-value">{typeof v === 'string' ? v : JSON.stringify(v)}</div>
+                  <div />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {summaryRaw.financials && Object.keys(summaryRaw.financials).length > 0 && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <h3>Financials</h3>
+              {Object.entries(summaryRaw.financials).map(([k, v]) => (
+                <div key={k} className="field-grid" style={{ padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
+                  <div className="field-label">{k.replace(/_/g, ' ')}</div>
+                  <div className="field-value">{typeof v === 'string' ? v : JSON.stringify(v)}</div>
+                  <div />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {summaryRaw.riskAndLiability && Object.keys(summaryRaw.riskAndLiability).length > 0 && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <h3>Risk & Liability</h3>
+              {Object.entries(summaryRaw.riskAndLiability).map(([k, v]) => (
+                <div key={k} className="field-grid" style={{ padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
+                  <div className="field-label">{k.replace(/_/g, ' ')}</div>
+                  <div className="field-value">{typeof v === 'string' ? v : JSON.stringify(v)}</div>
+                  <div />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {Array.isArray(summaryRaw.criticalProvisions) && summaryRaw.criticalProvisions.length > 0 && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <h3>Critical Provisions</h3>
+              <ul>
+                {summaryRaw.criticalProvisions.map((p: any, idx: number) => (
+                  <li key={idx} style={{ marginBottom: '0.5rem' }}>{typeof p === 'string' ? p : JSON.stringify(p)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {Array.isArray(summaryRaw.analystNotations) && summaryRaw.analystNotations.length > 0 && (
+            <div style={{ marginTop: '0.5rem' }}>
+              <h3>Analyst Notations</h3>
+              <ul>
+                {summaryRaw.analystNotations.map((n: any, idx: number) => (
+                  <li key={idx} style={{ marginBottom: '0.5rem' }}>{typeof n === 'string' ? n : JSON.stringify(n)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -31,7 +31,9 @@ COPY --from=builder /usr/local/bin/node /usr/local/bin/node
 COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
     RUN ln -sf /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     ln -sf /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx && \
-    apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates postgresql-client && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        openssl ca-certificates postgresql-client \
+        ocrmypdf tesseract-ocr tesseract-ocr-eng poppler-utils ghostscript && \
     rm -rf /var/lib/apt/lists/*
 
 # Install production dependencies

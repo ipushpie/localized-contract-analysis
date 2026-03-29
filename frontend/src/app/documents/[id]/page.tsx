@@ -211,11 +211,12 @@ export default function DocumentDetailPage() {
             <div className="error-box">{analysis.errorMessage}</div>
           )}
 
-          {(analysis.fixedFields || analysis.dynamicFields || analysis.specialFields) && (
+          {(analysis.fixedFields || analysis.dynamicFields || analysis.specialFields || analysis.summary) && (
             <AnalysisResultView
               fixedFields={analysis.fixedFields}
               dynamicFields={analysis.dynamicFields}
               specialFields={analysis.specialFields}
+              summary={analysis.summary}
             />
           )}
         </div>

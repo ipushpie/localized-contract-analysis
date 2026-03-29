@@ -32,6 +32,8 @@ services:
       EMBED_MODEL: ${EMBED_MODEL}
       GENERATION_MODEL: ${GENERATION_MODEL}
       PORT: ${PORT}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -50,6 +52,8 @@ services:
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
       PORT: "3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - backend
     restart: unless-stopped

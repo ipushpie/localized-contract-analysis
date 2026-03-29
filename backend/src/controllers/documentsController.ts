@@ -21,46 +21,67 @@ export const uploadDocument = async (req: Request, res: Response): Promise<void>
       if (allowed.includes(file.mimetype)) cb(null, true);
       else cb(new Error(`Unsupported file type: ${file.mimetype}. Allowed: PDF, DOCX, TXT`));
     },
-  }).single('file');
+  }).array('files', 50);
 
   try {
     await new Promise<void>((resolve, reject) => {
       upload(req as any, res as any, (err: any) => {
-        if (err)
-          reject(err);
-        else
-          resolve();
+        if (err) reject(err);
+        else resolve();
       });
     });
-  }
-  catch (err: any) {
+  } catch (err: any) {
     logger.warn(TAG, 'Upload rejected — multer error', { error: err?.message ?? String(err) });
     res.status(400).json({ error: err?.message ?? 'Upload error' });
     return;
   }
 
-  const file = (req as any).file as Express.Multer.File | undefined;
-  if (!file) {
-    logger.warn(TAG, 'Upload rejected — no file in request');
-    res.status(400).json({ error: 'No file uploaded' });
+  const files = (req as any).files as Express.Multer.File[] | undefined;
+  if (!files || files.length === 0) {
+    logger.warn(TAG, 'Upload rejected — no files in request');
+    res.status(400).json({ error: 'No files uploaded' });
     return;
   }
 
-  logger.info(TAG, `Upload received`, { filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size });
-  const doc = await prisma.document.create({
-    data: {
-      filename: file.originalname,
-      mimeType: file.mimetype,
-      fileData: Buffer.from(file.buffer) as any,
-      status: 'QUEUED',
-      progress: 0,
-    },
-  });
-  logger.info(TAG, `Document created, queuing ingestion`, { documentId: doc.id, filename: doc.filename });
-  acquireLock(`ingest:${doc.id}`);
-  void ingestDocument(doc.id).finally(() => releaseLock(`ingest:${doc.id}`));
+  // Create DB rows for each file
+  const created: { id: string; filename: string; status: string }[] = [];
+  for (const file of files) {
+    logger.info(TAG, `Upload received`, { filename: file.originalname, mimeType: file.mimetype, sizeBytes: file.size });
+    const doc = await prisma.document.create({
+      data: {
+        filename: file.originalname,
+        mimeType: file.mimetype,
+        fileData: Buffer.from(file.buffer) as any,
+        status: 'QUEUED',
+        progress: 0,
+      },
+    });
+    created.push({ id: doc.id, filename: doc.filename, status: doc.status });
+  }
 
-  res.status(202).json({ id: doc.id, filename: doc.filename, status: doc.status, message: 'Document queued for processing' });
+  logger.info(TAG, `Files created, scheduling ingestion`, { count: created.length });
+
+  // Background ingestion in batches of 3
+  void (async () => {
+    const BATCH = 3;
+    for (let i = 0; i < created.length; i += BATCH) {
+      const chunk = created.slice(i, i + BATCH);
+      await Promise.all(
+        chunk.map(async (c) => {
+          try {
+            acquireLock(`ingest:${c.id}`);
+            await ingestDocument(c.id);
+          } catch (e) {
+            logger.error(TAG, `Ingestion failed for document`, e, { documentId: c.id });
+          } finally {
+            releaseLock(`ingest:${c.id}`);
+          }
+        })
+      );
+    }
+  })();
+
+  res.status(202).json(created);
 };
 
 export const listDocuments = async (_req: Request, res: Response): Promise<void> => {

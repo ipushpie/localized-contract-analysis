@@ -19,10 +19,21 @@ export interface AnalysisResult {
   fixedFields: Record<string, FieldValue> | { fixed_fields: Record<string, FieldValue> } | null;
   dynamicFields: Record<string, Record<string, FieldValue>> | { dynamic_fields: Record<string, Record<string, FieldValue>> } | null;
   specialFields: SpecialFieldsData | { special_fields: SpecialFieldsData } | null;
+  summary?: Summary | { summary: Summary } | null;
   sources: unknown;
   modelName: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Summary {
+  narrativeSummary?: string;
+  coreIdentification?: Record<string, any>;
+  termAndDates?: Record<string, any>;
+  financials?: Record<string, any>;
+  riskAndLiability?: Record<string, any>;
+  criticalProvisions?: any[];
+  analystNotations?: any[];
 }
 
 export interface FieldValue {
@@ -47,7 +58,22 @@ export async function fetchDocuments(): Promise<DocumentItem[]> {
 
 export async function uploadDocument(file: File): Promise<{ id: string }> {
   const formData = new FormData();
-  formData.append('file', file);
+  formData.append('files', file);
+  const res = await fetch(`${API_URL}/documents`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Upload failed');
+  }
+  return res.json();
+}
+
+export async function uploadDocuments(files: FileList | File[]): Promise<{ id: string }[]> {
+  const formData = new FormData();
+  const list = Array.from(files as any as File[]);
+  for (const f of list) formData.append('files', f);
   const res = await fetch(`${API_URL}/documents`, {
     method: 'POST',
     body: formData,
