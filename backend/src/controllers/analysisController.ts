@@ -126,6 +126,7 @@ export const getAnalysis = async (req: Request, res: Response): Promise<void> =>
     fixedFields: analysis.fixedFields,
     dynamicFields: analysis.dynamicFields,
     specialFields: analysis.specialFields,
+    summary: (analysis.sources as any)?.summary || null,
     sources: analysis.sources,
     modelName: analysis.modelName,
     createdAt: analysis.createdAt,

@@ -27,6 +27,7 @@ const SUPPLIER_QUERIES: Record<string, string> = {
   'red-hat': 'red hat subscription SKU support tier renewal audit',
   salesforce: 'salesforce subscription order form MSA edition org license',
   servicenow: 'servicenow subscription unit order form instance SLA support',
+  general: 'contract specific business critical legal commercial data protection usage rights restrictions',
 };
 
 // In-memory cache for static query embeddings — these strings never change so
@@ -70,6 +71,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       const rawFixed = (combined as any)?.fixed_fields ?? null;
       const rawDynamic = (combined as any)?.dynamic_fields ?? null;
       const normalizedFixed = normalizeFixedFields(rawFixed);
+      applyContractStatusRule(normalizedFixed);
       const normalizedDynamic = normalizeDynamicFields(rawDynamic);
       fixedFields = normalizedFixed;
       dynamicFields = normalizedDynamic;
@@ -91,6 +93,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       } else {
         const rawFixed = await timedPass('Pass 1 Fixed', () => runPassWithAutoExpand(documentId, FIXED_QUERY, FIXED_PROMPT_FULL));
         const normalizedFixed = normalizeFixedFields(rawFixed);
+        applyContractStatusRule(normalizedFixed);
         fixedFields = normalizedFixed;
         await prisma.documentAnalysis.update({ where: { documentId }, data: { fixedFields: normalizedFixed as any, modelName: config.generationModel } });
         logger.info(TAG, `Pass 1 saved`, { documentId });
@@ -109,36 +112,47 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       }
     }
 
-    // Pass 3: Supplier-specific fields — non-fatal if it fails
-    logger.info(TAG, `Pass 3 starting — supplier fields`, { documentId });
-    const provider = extractProviderValue(fixedFields);
     let specialFields: unknown = {};
-    try {
-      specialFields = await timedPass('Pass 3 Supplier', () =>
-        runSupplierPass(documentId, provider)
-      );
-    } catch (err) {
-      logger.warn(TAG, `Pass 3 failed (non-fatal), skipping supplier fields`, { documentId, err: String(err) });
+    if (config.enableSupplierExtraction) {
+      logger.info(TAG, `Pass 3 starting — supplier fields`, { documentId });
+      const provider = extractProviderValue(fixedFields);
+      try {
+        specialFields = await timedPass('Pass 3 Supplier', () =>
+          runSupplierPass(documentId, provider)
+        );
+        await prisma.documentAnalysis.update({
+          where: { documentId },
+          data: { specialFields: specialFields as any, status: 'PARTIAL' },
+        });
+        logger.info(TAG, `Pass 3 (Supplier) saved (PARTIAL)`, { documentId });
+      } catch (err) {
+        logger.warn(TAG, `Pass 3 failed (non-fatal), skipping supplier fields`, { documentId, err: String(err) });
+      }
+    } else {
+      logger.info(TAG, `Pass 3 skipped — supplier-specific extraction disabled`, { documentId });
     }
 
-    // Pass 4: Summary generation (store under analysis.sources.summary)
+    // Pass 4: Summary generation
     try {
       logger.info(TAG, `Pass 4 starting — summary generation`, { documentId });
       const rawSummary = await timedPass('Pass 4 Summary', () => runPassWithAutoExpand(documentId, SUMMARY_QUERY, SUMMARY_PROMPT_FULL));
-      // Save summary under sources.summary
-      await prisma.documentAnalysis.update({ where: { documentId }, data: { sources: { summary: rawSummary } as any } });
-      logger.info(TAG, `Pass 4 summary saved`, { documentId });
+      // Save summary into sources.summary
+      await prisma.documentAnalysis.update({
+        where: { documentId },
+        data: {
+          specialFields: specialFields as any,
+          sources: { summary: rawSummary } as any,
+          status: 'DONE',
+        },
+      });
+      logger.info(TAG, `Pass 4 summary saved (DONE)`, { documentId });
     } catch (err) {
-      logger.warn(TAG, `Pass 4 failed (non-fatal), skipping summary`, { documentId, err: String(err) });
+      logger.warn(TAG, `Pass 4 failed (non-fatal), fallback to DONE status`, { documentId, err: String(err) });
+      await prisma.documentAnalysis.update({
+        where: { documentId },
+        data: { status: 'DONE', specialFields: specialFields as any },
+      });
     }
-
-    await prisma.documentAnalysis.update({
-      where: { documentId },
-      data: {
-        status: 'DONE',
-        specialFields: specialFields as any,
-      },
-    });
 
     logger.info(TAG, `Analysis complete`, { documentId, elapsed: elapsed(t0) });
   } catch (err) {
@@ -478,6 +492,35 @@ function normalizeFixedFields(raw: unknown): Record<string, { value: string; des
     }
   }
   return out;
+}
+
+function applyContractStatusRule(
+  fields: Record<string, { value: string; description?: string; confidence?: number }>
+): void {
+  const startDate = normalizeIsoDate(fields.start_date?.value);
+  const endDate = normalizeIsoDate(fields.end_date?.value);
+
+  if (!startDate || !endDate) {
+    fields.contract_status = {
+      value: 'Unknown',
+      confidence: 1,
+      description: 'Contract status is Unknown because start_date or end_date is missing.',
+    };
+    return;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const status = today >= startDate && today <= endDate ? 'Active' : 'Inactive';
+  fields.contract_status = {
+    value: status,
+    confidence: 1,
+    description: `Contract status computed from start_date ${startDate}, end_date ${endDate}, and current date ${today} using start-of-day precision.`,
+  };
+}
+
+function normalizeIsoDate(value: string | undefined): string | null {
+  if (!value) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
 }
 
 function normalizeDynamicFields(raw: unknown): Record<string, Record<string, { value: string; description?: string; confidence?: number }>> {

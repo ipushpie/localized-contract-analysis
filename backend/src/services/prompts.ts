@@ -145,6 +145,7 @@ Confidence formula:
 - expected location 18%
 
 If a field is absent, return "N/A" with confidence 0.1.
+Do not use "N/A" early. First search the full provided contract text, related clauses, tables, signature blocks, appendices, and referenced sections. Only after that final check, if the value is still not present or cannot be supported from the document, return "N/A".
 
 Return this exact shape and nothing else:
 {
@@ -260,7 +261,11 @@ Only if the document never explicitly states its own type, infer from content us
 8. **end_date**: Contract expiration date in YYYY-MM-DD format
 9. **contract_id**: Any unique identifier (contract number, reference number, agreement ID)
 10. **contract_classification**: Use only these values: SAAS|IAAS|PAAS|PROFESSIONAL_SERVICES|MANAGED_SERVICES|HARDWARE|RESELLER|NETWORK|OTHER
-11. **contract_status**: Determine current contract status ("Active" if currently in effect, "Inactive" if expired or not yet started, "Unknown" if dates are unclear or missing)
+11. **contract_status**: Determine current contract status using this exact rule:
+  - "Unknown" if start_date OR end_date is missing, null, undefined, or cannot be determined
+  - "Active" if start_date <= current date <= end_date
+  - "Inactive" if current date is before start_date or after end_date
+  Use start-of-day date comparison only. Do not invent any other status values.
 12. **contract_term**: Extract contract duration from document text (e.g., "24 months", "3 years", "36 months"). If not explicitly stated, calculate from start_date and end_date and format as months (e.g., "17 months"). Use "N/A" if cannot be determined.
 13. **payment_terms**: Extract payment terms including duration and timing. Format as "X Days | Advanced" or "X Days | Arrears" (e.g., "30 Days | Advanced", "45 Days | Arrears", "Net 30 Days | Arrears"). If only duration is mentioned without timing, default to "Arrears". Use "N/A" if not specified.
 14. **auto_renewal**: Whether contract automatically renews ("Yes" or "No" - must be determined from contract text, default to "No" if unclear)
@@ -330,6 +335,7 @@ Return a valid JSON object with this exact structure:
 **IMPORTANT:**
 - Extract ONLY these 20 fixed fields, nothing else
 - Focus on identifying the provider/supplier accurately as this will be used for subsequent targeted extraction
+- Use "N/A" only as the final fallback after checking the whole document. Do not default to "N/A" just because the first relevant section is unclear.
 - Your response MUST be a valid JSON object matching the exact structure shown above
 - Do not include explanatory text outside the JSON
 `;
@@ -359,7 +365,7 @@ Rules:
 - every field must include value, description, confidence
 - extract only business-critical clauses with high certainty
 - prefer explicit measurable obligations covering payment, renewal, liability, data protection, service levels, IP, confidentiality, and termination
-- return N/A with confidence 0.1 if a value is not available
+- return N/A with confidence 0.1 only after checking the full provided text and confirming the value is not available
 
 Output:
 {
@@ -385,7 +391,7 @@ CRITICAL EXTRACTION RULES:
 - Do NOT extract fixed fields (these are handled in the fixed-fields pass).
 - Do NOT extract supplier-specific fields (these are handled in the supplier-specific pass).
 - Only extract business-critical clauses when you are VERY confident (>=0.95).
-- If a value cannot be determined with high confidence, return "N/A" with confidence 0.1.
+- If a value cannot be determined with high confidence, return "N/A" with confidence 0.1 only after exhausting the provided document text and checking the most likely locations for that information.
 - For any monetary values use format "CURRENCY:AMOUNT" (e.g., "USD:50000.00").
 - Each field must include: value, description, confidence (0.0-1.0).
 
@@ -446,7 +452,7 @@ export const SUPPLIER_PROMPT = `You are an expert contract analyst specializing 
    - Coverage of Typical Locations (15%)
    - Clause Structure Integrity (12%)
 
-9. **MISSING FIELDS:** If a field is not found or not applicable, use "N/A" with confidence 0.1
+9. **MISSING FIELDS:** If a field is not found or not applicable, use "N/A" with confidence 0.1 only after checking the full provided text, likely clause locations, annexes, schedules, tables, and signature sections. Do not default to "N/A" early.
 10. **FINANCIAL AMOUNTS:** For any financial/monetary values, ALWAYS use the format "CURRENCY:AMOUNT"
 11. **DESCRIPTION REQUIREMENT:** For each field, provide a brief, plain description
 
@@ -515,7 +521,7 @@ export const SUPPLIER_PROMPT_FULL = `You are an expert contract analyst speciali
   **Calculate:** (Criterion_1 × 0.28) + (Criterion_2 × 0.25) + (Criterion_3 × 0.20) + (Criterion_4 × 0.15) + (Criterion_5 × 0.12)
    
 
-9. **MISSING FIELDS:** If a field is not found or not applicable, use "N/A" with confidence 0.1
+9. **MISSING FIELDS:** If a field is not found or not applicable, use "N/A" with confidence 0.1 only after checking the full provided text, likely clause locations, annexes, schedules, tables, and signature sections. Do not default to "N/A" early.
 10. **FINANCIAL AMOUNTS:** For any financial/monetary values, ALWAYS use the format "CURRENCY:AMOUNT" (e.g., "USD:50000", "EUR:25000.50"). Extract both currency and amount together.
 11. **DESCRIPTION REQUIREMENT:** For each field, provide a brief, plain description that explains what the field represents in business context, similar to how dynamic fields include descriptions.
 
@@ -587,7 +593,7 @@ CRITICAL FORMATTING REQUIREMENTS:
 - Do NOT use any markdown formatting whatsoever
 - Return raw JSON only
 
-Extract information directly from the contract without citations or references. If information is not found, use "N/A".
+Extract information directly from the contract without citations or references. Use "N/A" only after checking the full provided contract text and determining the information is genuinely not present or not supportable from the document.
 
 The JSON must follow this exact structure:
 {

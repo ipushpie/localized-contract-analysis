@@ -27,4 +27,6 @@ export const config = {
   ocrTimeoutMs: parseInt(process.env.OCR_TIMEOUT_MS || '120000', 10),
   // Auto-start analysis after successful ingestion (default: true)
   autoAnalyzeOnUpload: (process.env.AUTO_ANALYZE_ON_UPLOAD || 'true') === 'true',
+  // Supplier-specific extraction is disabled by default unless explicitly enabled.
+  enableSupplierExtraction: (process.env.ENABLE_SUPPLIER_EXTRACTION || 'false') === 'true',
 } as const;

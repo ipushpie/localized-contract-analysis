@@ -201,8 +201,8 @@ export default function DocumentDetailPage() {
               <div className="spinner" style={{ flexShrink: 0 }} />
               <p style={{ color: 'var(--muted)', margin: 0 }}>
                 {analysis.status === 'RUNNING'
-                  ? 'Running pre-analysis across the retrieved chunks, then fixed, supplier-specific, and dynamic extraction passes.'
-                  : 'Pre-analysis, fixed fields, and dynamic fields are available. Supplier-specific extraction is still being finalized.'}
+                  ? 'Running pre-analysis across the retrieved chunks, then fixed, dynamic, and summary extraction passes.'
+                  : 'Pre-analysis and extraction are still being finalized.'}
               </p>
             </div>
           )}
