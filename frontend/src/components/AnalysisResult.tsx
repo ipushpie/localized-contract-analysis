@@ -33,9 +33,9 @@ function ConfidenceDot({ confidence }: { confidence?: number }) {
 
 function FieldRow({ label, field }: { label: string; field: FieldValue }) {
   return (
-    <div className="field-grid" style={{ padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
+    <div className="field-grid" style={{ padding: '0.75rem 0', borderBottom: '1px solid var(--border)' }}>
       <div className="field-label">{label.replace(/_/g, ' ')}</div>
-      <div className="field-value">{field.value || 'N/A'}</div>
+      <div className="field-value" style={{ fontWeight: 500 }}>{field.value || 'N/A'}</div>
       <div><ConfidenceDot confidence={field.confidence} /></div>
     </div>
   );
@@ -93,70 +93,70 @@ export function AnalysisResultView({ fixedFields, dynamicFields, specialFields, 
     <div>
       {/* Summary */}
       {summaryRaw && (
-        <div className="card" style={{ borderLeft: '4px solid var(--success)', background: 'rgba(var(--success-rgb), 0.03)' }}>
-          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ fontSize: '1.25rem' }}>📋</span> Executive Summary
+        <div className="card" style={{ borderLeft: '6px solid var(--green)', background: 'white' }}>
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', fontSize: '1.75rem' }}>
+            <span style={{ fontSize: '1.75rem' }}>📋</span> Executive Summary
           </h2>
           {summaryRaw.narrativeSummary && (
-            <div style={{ marginBottom: '1.25rem' }}>
-              <p style={{ margin: 0, fontSize: '1.05rem', lineHeight: '1.6', fontWeight: 500 }}>
+            <div style={{ marginBottom: '2rem', paddingBottom: '1.5rem', borderBottom: '1px solid var(--border)' }}>
+              <p style={{ margin: 0, fontSize: '1.125rem', lineHeight: '1.7', fontWeight: 500, color: '#1e293b' }}>
                 {summaryRaw.narrativeSummary}
               </p>
             </div>
           )}
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '2rem' }}>
             {summaryRaw.coreIdentification && Object.keys(summaryRaw.coreIdentification).length > 0 && (
-              <div>
-                <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.25rem' }}>Core Identification</h3>
-                {Object.entries(summaryRaw.coreIdentification).map(([k, v]) => (
-                  <div key={k} className="field-grid" style={{ padding: '0.4rem 0', borderBottom: '1px dotted var(--border)' }}>
-                    <div className="field-label" style={{ fontSize: '0.8rem' }}>{k.replace(/_/g, ' ')}</div>
-                    <div className="field-value" style={{ fontSize: '0.85rem' }}>{typeof v === 'string' ? v : JSON.stringify(v)}</div>
-                    <div />
-                  </div>
-                ))}
+              <div style={{ background: 'white', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                <h3 style={{ borderBottom: '2px solid #3b82f6', display: 'inline-block', paddingBottom: '0.25rem', marginBottom: '1.25rem', color: '#1e293b', fontSize: '0.9rem' }}>Core Identification</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem 2rem' }}>
+                  {Object.entries(summaryRaw.coreIdentification).map(([k, v]) => (
+                    <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                      <div className="field-label" style={{ fontSize: '0.75rem', textTransform: 'uppercase' }}>{k.replace(/_/g, ' ')}</div>
+                      <div className="field-value" style={{ fontWeight: 600, fontSize: '0.95rem' }}>{String(v)}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
-            {summaryRaw.termAndDates && Object.keys(summaryRaw.termAndDates).length > 0 && (
-              <div>
-                <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.25rem' }}>Term & Dates</h3>
-                {Object.entries(summaryRaw.termAndDates).map(([k, v]) => (
-                  <div key={k} className="field-grid" style={{ padding: '0.4rem 0', borderBottom: '1px dotted var(--border)' }}>
-                    <div className="field-label" style={{ fontSize: '0.8rem' }}>{k.replace(/_/g, ' ')}</div>
-                    <div className="field-value" style={{ fontSize: '0.85rem' }}>{typeof v === 'string' ? v : JSON.stringify(v)}</div>
-                    <div />
-                  </div>
-                ))}
-              </div>
-            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>
+              {summaryRaw.termAndDates && Object.keys(summaryRaw.termAndDates).length > 0 && (
+                <div style={{ background: 'white', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                  <h3 style={{ borderBottom: '2px solid var(--yellow)', display: 'inline-block', paddingBottom: '0.25rem', marginBottom: '1.25rem', color: '#1e293b', fontSize: '0.9rem' }}>Term & Dates</h3>
+                  {Object.entries(summaryRaw.termAndDates).map(([k, v]) => (
+                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #f1f5f9' }}>
+                      <div className="field-label" style={{ fontSize: '0.8rem' }}>{k.replace(/_/g, ' ')}</div>
+                      <div className="field-value" style={{ fontWeight: 600, fontSize: '0.85rem', textAlign: 'right' }}>{String(v)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-            {summaryRaw.financials && Object.keys(summaryRaw.financials).length > 0 && (
-              <div>
-                <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.25rem' }}>Financials</h3>
-                {Object.entries(summaryRaw.financials).map(([k, v]) => (
-                  <div key={k} className="field-grid" style={{ padding: '0.4rem 0', borderBottom: '1px dotted var(--border)' }}>
-                    <div className="field-label" style={{ fontSize: '0.8rem' }}>{k.replace(/_/g, ' ')}</div>
-                    <div className="field-value" style={{ fontSize: '0.85rem' }}>{typeof v === 'string' ? v : JSON.stringify(v)}</div>
-                    <div />
-                  </div>
-                ))}
-              </div>
-            )}
+              {summaryRaw.financials && Object.keys(summaryRaw.financials).length > 0 && (
+                <div style={{ background: 'white', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                  <h3 style={{ borderBottom: '2px solid var(--green)', display: 'inline-block', paddingBottom: '0.25rem', marginBottom: '1.25rem', color: '#1e293b', fontSize: '0.9rem' }}>Financials</h3>
+                  {Object.entries(summaryRaw.financials).map(([k, v]) => (
+                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #f1f5f9' }}>
+                      <div className="field-label" style={{ fontSize: '0.8rem' }}>{k.replace(/_/g, ' ')}</div>
+                      <div className="field-value" style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--green)', textAlign: 'right' }}>{String(v)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-            {summaryRaw.riskAndLiability && Object.keys(summaryRaw.riskAndLiability).length > 0 && (
-              <div>
-                <h3 style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.25rem' }}>Risk & Liability</h3>
-                {Object.entries(summaryRaw.riskAndLiability).map(([k, v]) => (
-                  <div key={k} className="field-grid" style={{ padding: '0.4rem 0', borderBottom: '1px dotted var(--border)' }}>
-                    <div className="field-label" style={{ fontSize: '0.8rem' }}>{k.replace(/_/g, ' ')}</div>
-                    <div className="field-value" style={{ fontSize: '0.85rem' }}>{typeof v === 'string' ? v : JSON.stringify(v)}</div>
-                    <div />
-                  </div>
-                ))}
-              </div>
-            )}
+              {summaryRaw.riskAndLiability && Object.keys(summaryRaw.riskAndLiability).length > 0 && (
+                <div style={{ background: 'white', padding: '1.5rem', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                  <h3 style={{ borderBottom: '2px solid var(--red)', display: 'inline-block', paddingBottom: '0.25rem', marginBottom: '1.25rem', color: '#1e293b', fontSize: '0.9rem' }}>Risk & Liability</h3>
+                  {Object.entries(summaryRaw.riskAndLiability).map(([k, v]) => (
+                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #f1f5f9' }}>
+                      <div className="field-label" style={{ fontSize: '0.8rem' }}>{k.replace(/_/g, ' ')}</div>
+                      <div className="field-value" style={{ fontWeight: 600, fontSize: '0.85rem', textAlign: 'right' }}>{String(v)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
           <div style={{ marginTop: '1.5rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem' }}>

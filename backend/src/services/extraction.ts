@@ -60,10 +60,11 @@ export async function analyzeDocument(documentId: string): Promise<void> {
 
     logger.info(TAG, `Starting analysis`, { documentId, resumeFrom: hasPass2 ? 'Pass 3' : hasPass1 ? 'Pass 2' : 'Pass 1' });
 
-    // Passes: try to combine Pass 1 + Pass 2 into a single LLM call when
-    // neither has been performed yet. This reduces total model latency.
-    let fixedFields: unknown = null;
-    let dynamicFields: unknown = null;
+    // Initialize local variables from previous results if available
+    let fixedFields: any = prior?.fixedFields || null;
+    let dynamicFields: any = prior?.dynamicFields || null;
+    let specialFields: any = prior?.specialFields || {};
+    let sources: any = prior?.sources || {};
 
     if (!hasPass1 && !hasPass2) {
       const combined = await timedPass('Combined Pass 1+2', () => runCombinedPass(documentId));
@@ -112,7 +113,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       }
     }
 
-    let specialFields: unknown = {};
+    // Pass 3: Supplier-specific extraction (Special Fields)
     if (config.enableSupplierExtraction) {
       logger.info(TAG, `Pass 3 starting — supplier fields`, { documentId });
       const provider = extractProviderValue(fixedFields);
@@ -137,14 +138,14 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       logger.info(TAG, `Pass 4 starting — summary generation`, { documentId });
       const rawSummary = await timedPass('Pass 4 Summary', () => runPassWithAutoExpand(documentId, SUMMARY_QUERY, SUMMARY_PROMPT_FULL));
       // Save summary into sources.summary
-      await prisma.documentAnalysis.update({
-        where: { documentId },
-        data: {
-          specialFields: specialFields as any,
-          sources: { summary: rawSummary } as any,
-          status: 'DONE',
-        },
-      });
+        await prisma.documentAnalysis.update({
+          where: { documentId },
+          data: {
+            specialFields: specialFields as any,
+            sources: { ...sources, summary: rawSummary } as any,
+            status: 'DONE',
+          },
+        });
       logger.info(TAG, `Pass 4 summary saved (DONE)`, { documentId });
     } catch (err) {
       logger.warn(TAG, `Pass 4 failed (non-fatal), fallback to DONE status`, { documentId, err: String(err) });
@@ -254,8 +255,17 @@ async function runPass(
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const raw = await ollamaGenerateWithRetry(prompt, options?.timeoutMs);
+    // Debug log for raw output
+    logger.debug(TAG, `LLM Response Received`, { length: raw.length, preview: raw.slice(0, 100) });
     try {
-      return parseLLMJson(raw);
+      const parsed = parseLLMJson(raw) as Record<string, any>;
+      if (parsed && typeof parsed === 'object') {
+        const keys = Object.keys(parsed);
+        const topKey = keys[0];
+        const numFields = topKey && typeof parsed[topKey] === 'object' ? Object.keys(parsed[topKey]).length : 0;
+        logger.info(TAG, `JSON parsed successfully`, { topKey, numFields });
+      }
+      return parsed;
     } catch (err) {
       logger.warn(TAG, `JSON parse failed`, { attempt, maxRetries: MAX_RETRIES });
       // Print raw model output to console for debugging
@@ -304,10 +314,8 @@ async function runSupplierPass(
   documentId: string,
   supplierRaw: string | null
 ): Promise<unknown> {
-  if (!supplierRaw) return {};
-
-  const providerLower = supplierRaw.toLowerCase();
-  const key = Object.keys(SUPPLIER_QUERIES).find((k) => providerLower.includes(k)) ?? 'general';
+  // Force use of 'general' mapping for all documents as requested
+  const key = 'general';
 
   let supplierData: Record<string, unknown> = {};
   try {
@@ -341,11 +349,17 @@ async function runSupplierPass(
   if (promptTemplate === SUPPLIER_PROMPT_FULL) {
     prompt = promptTemplate
       .replace(/\$\{mappingType\}/g, key)
-      .replace(/\$\{supplierDisplayName\}/g, key)
+      .replace(/\$\{supplierDisplayName\}/g, supplierRaw || 'the provider')
       + '\n\nSupplier fields:\n' + fieldList;
   } else {
-    prompt = SUPPLIER_PROMPT.replace('{SUPPLIER_NAME}', key).replace('{SUPPLIER_FIELD_LIST}', fieldList);
+    prompt = SUPPLIER_PROMPT
+      .replace('{SUPPLIER_NAME}', supplierRaw || 'the provider')
+      .replace('{mappingType}', key)
+      .replace('{SUPPLIER_FIELD_LIST}', fieldList);
   }
+
+  // Debug log for prompt size
+  logger.info(TAG, `Pass 3 prompt prepared`, { promptChars: prompt.length, key });
 
   return runPass(documentId, query, prompt);
 }

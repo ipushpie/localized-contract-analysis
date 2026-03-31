@@ -26,7 +26,7 @@ export const config = {
   ocrEnabled: (process.env.OCR_ENABLED || 'true') === 'true',
   ocrTimeoutMs: parseInt(process.env.OCR_TIMEOUT_MS || '120000', 10),
   // Auto-start analysis after successful ingestion (default: true)
-  autoAnalyzeOnUpload: (process.env.AUTO_ANALYZE_ON_UPLOAD || 'true') === 'true',
+  autoAnalyzeOnUpload: (process.env.AUTO_ANALYZE_ON_UPLOAD || 'false') === 'true',
   // Supplier-specific extraction is disabled by default unless explicitly enabled.
-  enableSupplierExtraction: (process.env.ENABLE_SUPPLIER_EXTRACTION || 'false') === 'true',
+  enableSupplierExtraction: (process.env.ENABLE_SUPPLIER_EXTRACTION || 'true') === 'true',
 } as const;
