@@ -58,7 +58,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       update: { status: 'RUNNING', errorMessage: null },
     });
 
-    logger.info(TAG, `Starting analysis`, { documentId, resumeFrom: hasPass2 ? 'Pass 3' : hasPass1 ? 'Pass 2' : 'Pass 1' });
+    logger.info(TAG, `Starting analysis`, { documentId, resumeFrom: hasPass2 ? 'Pass 4' : hasPass1 ? 'Pass 2' : 'Pass 1' });
 
     // Initialize local variables from previous results if available
     let fixedFields: any = prior?.fixedFields || null;
@@ -68,26 +68,28 @@ export async function analyzeDocument(documentId: string): Promise<void> {
 
     if (!hasPass1 && !hasPass2) {
       const combined = await timedPass('Combined Pass 1+2', () => runCombinedPass(documentId));
-      // Normalize LLM output shapes so frontend always receives FieldValue objects
+      // Normalize LLM output shapes
       const rawFixed = (combined as any)?.fixed_fields ?? null;
       const rawDynamic = (combined as any)?.dynamic_fields ?? null;
+      
       const normalizedFixed = normalizeFixedFields(rawFixed);
       applyContractStatusRule(normalizedFixed);
       const normalizedDynamic = normalizeDynamicFields(rawDynamic);
+      
       fixedFields = normalizedFixed;
       dynamicFields = normalizedDynamic;
+
       await prisma.documentAnalysis.update({
         where: { documentId },
         data: {
           fixedFields: normalizedFixed as any,
           dynamicFields: normalizedDynamic as any,
           modelName: config.generationModel,
-          status: Object.keys(normalizedDynamic || {}).length > 0 ? 'PARTIAL' : 'RUNNING',
+          status: 'PARTIAL',
         },
       });
       logger.info(TAG, `Combined pass saved`, { documentId });
     } else {
-      // Existing behavior: load or run Pass 1
       if (hasPass1) {
         fixedFields = prior!.fixedFields;
         logger.info(TAG, `Pass 1 skipped — using existing fixedFields`, { documentId });
@@ -100,7 +102,6 @@ export async function analyzeDocument(documentId: string): Promise<void> {
         logger.info(TAG, `Pass 1 saved`, { documentId });
       }
 
-      // Pass 2: Dynamic fields (skip if already saved)
       if (hasPass2) {
         dynamicFields = prior!.dynamicFields;
         logger.info(TAG, `Pass 2 skipped — using existing dynamicFields`, { documentId });
@@ -108,7 +109,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
         const rawDynamic = await timedPass('Pass 2 Dynamic', () => runPassWithAutoExpand(documentId, DYNAMIC_QUERY, DYNAMIC_PROMPT_FULL));
         const normalizedDynamic = normalizeDynamicFields(rawDynamic);
         dynamicFields = normalizedDynamic;
-        await prisma.documentAnalysis.update({ where: { documentId }, data: { status: Object.keys(normalizedDynamic || {}).length > 0 ? 'PARTIAL' : 'RUNNING', dynamicFields: normalizedDynamic as any } });
+        await prisma.documentAnalysis.update({ where: { documentId }, data: { status: 'PARTIAL', dynamicFields: normalizedDynamic as any } });
         logger.info(TAG, `Pass 2 saved (PARTIAL)`, { documentId });
       }
     }
@@ -118,9 +119,10 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       logger.info(TAG, `Pass 3 starting — supplier fields`, { documentId });
       const provider = extractProviderValue(fixedFields);
       try {
-        specialFields = await timedPass('Pass 3 Supplier', () =>
+        const rawSpecial = await timedPass('Pass 3 Supplier', () =>
           runSupplierPass(documentId, provider)
         );
+        specialFields = (rawSpecial as any)?.special_fields ?? rawSpecial ?? {};
         await prisma.documentAnalysis.update({
           where: { documentId },
           data: { specialFields: specialFields as any, status: 'PARTIAL' },
@@ -129,24 +131,38 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       } catch (err) {
         logger.warn(TAG, `Pass 3 failed (non-fatal), skipping supplier fields`, { documentId, err: String(err) });
       }
-    } else {
-      logger.info(TAG, `Pass 3 skipped — supplier-specific extraction disabled`, { documentId });
     }
 
     // Pass 4: Summary generation
     try {
       logger.info(TAG, `Pass 4 starting — summary generation`, { documentId });
       const rawSummary = await timedPass('Pass 4 Summary', () => runPassWithAutoExpand(documentId, SUMMARY_QUERY, SUMMARY_PROMPT_FULL));
-      // Save summary into sources.summary
-        await prisma.documentAnalysis.update({
-          where: { documentId },
-          data: {
-            specialFields: specialFields as any,
-            sources: { ...sources, summary: rawSummary } as any,
-            status: 'DONE',
-          },
-        });
-      logger.info(TAG, `Pass 4 summary saved (DONE)`, { documentId });
+      
+      const processingTimeMs = Date.now() - t0;
+      const overallConfidence = calculateOverallConfidence(fixedFields, dynamicFields, specialFields);
+
+      // Enterprise format metadata
+      const enterpriseSources = {
+        ...sources,
+        summary: rawSummary,
+        metadata: {
+          processingTimeMs,
+          overallConfidence,
+          modelUsed: config.generationModel,
+          extractionVersion: "1.0",
+          extractionDate: new Date().toISOString()
+        }
+      };
+
+      await prisma.documentAnalysis.update({
+        where: { documentId },
+        data: {
+          specialFields: specialFields as any,
+          sources: enterpriseSources as any,
+          status: 'DONE',
+        },
+      });
+      logger.info(TAG, `Pass 4 summary saved (DONE)`, { documentId, elapsed: processingTimeMs });
     } catch (err) {
       logger.warn(TAG, `Pass 4 failed (non-fatal), fallback to DONE status`, { documentId, err: String(err) });
       await prisma.documentAnalysis.update({
@@ -163,6 +179,36 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       data: { status: 'FAILED', errorMessage: String(err) },
     }).catch((dbErr) => logger.error(TAG, 'DB error updating to FAILED', dbErr as Error, { documentId }));
   }
+}
+
+function calculateOverallConfidence(fixed: any, dynamic: any, special: any): number {
+  let sum = 0;
+  let count = 0;
+
+  const add = (obj: any) => {
+    if (!obj || typeof obj !== 'object') return;
+    for (const v of Object.values(obj)) {
+      if (v && typeof v === 'object' && 'confidence' in (v as any)) {
+        const conf = typeof (v as any).confidence === 'number' ? (v as any).confidence : 0;
+        sum += conf;
+        count++;
+      }
+    }
+  };
+
+  add(fixed);
+  if (dynamic) {
+    for (const section of Object.values(dynamic)) {
+      add(section);
+    }
+  }
+  if (special) {
+    for (const section of Object.values(special)) {
+      add(section);
+    }
+  }
+
+  return count > 0 ? Number((sum / count).toFixed(2)) : 0;
 }
 
 async function timedPass<T>(label: string, fn: () => Promise<T>): Promise<T> {
@@ -236,19 +282,21 @@ async function runPass(
     const chunkPreviews = chunks.map((c) => String(c.content).slice(0, 200));
     const contextLength = context.length;
     const promptLength = prompt.length;
-    logger.info(TAG, 'runPass: prompt prepared', {
-      documentId,
-      includeAll,
-      queryPreview: queryText.slice(0, 120),
-      numChunks: chunks.length,
-      chunkIdsPreview: chunkIds.slice(0, 50),
-      chunkOriginalLengthsPreview: chunkOriginalLengths.slice(0, 50),
-      chunkTruncatedLengthsPreview: chunkTruncatedLengths.slice(0, 50),
-      chunkPreviewsPreview: chunkPreviews.slice(0, 10),
-      chunkTruncate: CHUNK_TRUNCATE,
-      contextLength,
-      promptLength,
+    logger.info(TAG, `runPass: prompt prepared (${chunks.length} chunks, ${context.length} chars)`, { 
+      documentId, 
+      query: queryText.slice(0, 60), 
+      includeAll 
     });
+    
+    // Detailed metrics moved to debug
+    logger.debug(TAG, 'runPass details', {
+      chunkCount: chunks.length,
+      chunkIds: chunks.map(c => c.id).slice(0, 10),
+      originalLengths: chunks.map(c => String(c.content).length).slice(0, 10),
+      contextLength: context.length,
+      promptLength: prompt.length,
+    });
+
   } catch (logErr) {
     logger.warn(TAG, 'runPass: failed to log chunk metrics', { documentId, err: String(logErr) });
   }
@@ -496,11 +544,16 @@ function normalizeFixedFields(raw: unknown): Record<string, { value: string; des
     } else if (typeof v === 'object') {
       const vv = v as Record<string, unknown>;
       if ('value' in vv) {
-        out[k] = { value: vv.value == null ? '' : String(vv.value), description: vv.description as string | undefined, confidence: typeof vv.confidence === 'number' ? vv.confidence : undefined };
+        out[k] = { 
+          value: vv.value == null ? '' : String(vv.value), 
+          description: vv.description as string | undefined, 
+          confidence: typeof vv.confidence === 'number' ? vv.confidence : undefined 
+        };
       } else {
-        // Fallback: stringify object
-        out[k] = { value: JSON.stringify(vv) };
+        // Handle object without 'value' key if needed, or preserve as is
+        out[k] = { value: JSON.stringify(vv), ...vv };
       }
+
     } else {
       out[k] = { value: String(v) };
     }
@@ -555,15 +608,40 @@ function normalizeDynamicFields(raw: unknown): Record<string, Record<string, { v
       if (Array.isArray(fields)) {
         out[section] = {};
         (fields as any[]).forEach((f, i) => {
-          out[section][String(i)] = typeof f === 'string' ? { value: f } : 'value' in (f as any) ? { value: (f as any).value ?? '' } : { value: JSON.stringify(f) };
+          if (typeof f === 'string') {
+            out[section][String(i)] = { value: f };
+          } else if (typeof f === 'object' && f !== null && 'value' in (f as any)) {
+            const vv = f as any;
+            out[section][String(i)] = { 
+              value: vv.value ?? '', 
+              description: vv.description, 
+              confidence: typeof vv.confidence === 'number' ? vv.confidence : undefined 
+            };
+          } else {
+            out[section][String(i)] = { value: JSON.stringify(f) };
+          }
         });
+
       } else if (typeof fields === 'object') {
         out[section] = {};
         for (const [k, v] of Object.entries(fields as Record<string, unknown>)) {
           if (v === null || v === undefined) out[section][k] = { value: '' };
           else if (typeof v === 'string') out[section][k] = { value: v };
-          else if (typeof v === 'object' && 'value' in (v as any)) out[section][k] = { value: (v as any).value ?? '' };
-          else out[section][k] = { value: JSON.stringify(v) };
+          else if (typeof v === 'object' && 'value' in (v as any)) {
+            const vv = v as any;
+            out[section][k] = { 
+              value: vv.value ?? '', 
+              description: vv.description,
+              confidence: typeof vv.confidence === 'number' ? vv.confidence : undefined
+            };
+          }
+          else if (typeof v === 'object') {
+             out[section][k] = { value: JSON.stringify(v), ...v };
+          }
+          else {
+             out[section][k] = { value: String(v) };
+          }
+
         }
       } else {
         out[section] = { '0': { value: String(fields) } };

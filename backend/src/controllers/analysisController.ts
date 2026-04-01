@@ -120,17 +120,27 @@ export const getAnalysis = async (req: Request, res: Response): Promise<void> =>
 
   res.json({
     id: analysis.id,
-    documentId: analysis.documentId,
+    contractId: analysis.documentId,
+    tenantId: "dd9b65e5-c480-48f5-9377-cbd5abb64739",
     status: analysis.status,
     errorMessage: analysis.errorMessage,
     fixedFields: analysis.fixedFields,
     dynamicFields: analysis.dynamicFields,
     specialFields: analysis.specialFields,
-    summary: (analysis.sources as any)?.summary || null,
-    sources: analysis.sources,
-    modelName: analysis.modelName,
-    createdAt: analysis.createdAt,
-    updatedAt: analysis.updatedAt,
+    overallConfidence: (analysis.sources as any)?.metadata?.overallConfidence ?? 0,
+    processingTimeMs: (analysis.sources as any)?.metadata?.processingTimeMs ?? 0,
+    modelUsed: analysis.modelName || "gpt-oss",
+    extractionVersion: (analysis.sources as any)?.metadata?.extractionVersion ?? "1.0",
+    extractionDate: (analysis.sources as any)?.metadata?.extractionDate ?? analysis.createdAt,
+    documentSummary: (analysis.sources as any)?.summary || null,
+    contractInfo: {
+      id: analysis.documentId,
+      title: (analysis.fixedFields as any)?.original_filename?.value || "Unknown Document",
+      description: (analysis.dynamicFields as any)?.General?.contract_description?.value || "No description available",
+      status: (analysis.fixedFields as any)?.contract_status?.value || "Unknown",
+      createdAt: analysis.createdAt,
+      updatedAt: analysis.updatedAt,
+    }
   });
 };
 

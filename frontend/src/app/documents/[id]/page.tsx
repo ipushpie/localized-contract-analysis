@@ -16,6 +16,7 @@ export default function DocumentDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [reanalysing, setReanalysing] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
 
   const loadData = useCallback(async () => {
     try {
@@ -51,9 +52,20 @@ export default function DocumentDetailPage() {
     return () => clearInterval(interval);
   }, [analysis, doc, loadData]);
 
+  // Live timer effect
+  useEffect(() => {
+    if (analysis?.status === 'DONE' && analysis.processingTimeMs) {
+      setElapsed(Math.round(analysis.processingTimeMs / 1000));
+    } else {
+      setElapsed(0);
+    }
+  }, [analysis?.status, analysis?.processingTimeMs]);
+
+
   const handleAnalyze = async () => {
     setAnalyzing(true);
     setError(null);
+    setElapsed(0);
     try {
       await triggerAnalysis(id);
       await loadData();
@@ -68,6 +80,7 @@ export default function DocumentDetailPage() {
   const handleReanalyse = async () => {
     setReanalysing(true);
     setError(null);
+    setElapsed(0);
     try {
       // Call the reanalyse endpoint which removes previous analysis data then starts fresh analysis.
       await reanalyseDocument(id);
@@ -192,6 +205,21 @@ export default function DocumentDetailPage() {
                 Model: {analysis.modelName}
               </span>
             )}
+            <div style={{ 
+              marginLeft: 'auto', 
+              background: 'var(--accent-light)', 
+              color: 'var(--accent)', 
+              padding: '0.4rem 0.8rem', 
+              borderRadius: '8px',
+              fontSize: '0.85rem',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem'
+            }}>
+              <span style={{ opacity: 0.7 }}>⏱</span>
+              {elapsed}s
+            </div>
           </div>
 
           
@@ -211,12 +239,12 @@ export default function DocumentDetailPage() {
             <div className="error-box">{analysis.errorMessage}</div>
           )}
 
-          {(analysis.fixedFields || analysis.dynamicFields || analysis.specialFields || analysis.summary) && (
+          {(analysis.fixedFields || analysis.dynamicFields || analysis.specialFields || analysis.documentSummary) && (
             <AnalysisResultView
               fixedFields={analysis.fixedFields}
               dynamicFields={analysis.dynamicFields}
               specialFields={analysis.specialFields}
-              summary={analysis.summary}
+              summary={analysis.documentSummary}
             />
           )}
         </div>

@@ -19,9 +19,10 @@ export interface AnalysisResult {
   fixedFields: Record<string, FieldValue> | { fixed_fields: Record<string, FieldValue> } | null;
   dynamicFields: Record<string, Record<string, FieldValue>> | { dynamic_fields: Record<string, Record<string, FieldValue>> } | null;
   specialFields: SpecialFieldsData | { special_fields: SpecialFieldsData } | null;
-  summary?: Summary | { summary: Summary } | null;
+  documentSummary?: Summary | { summary: Summary } | null;
   sources: unknown;
   modelName: string | null;
+  processingTimeMs?: number;
   createdAt: string;
   updatedAt: string;
 }

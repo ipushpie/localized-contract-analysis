@@ -1,7 +1,7 @@
 'use client';
 
 export function StatusBadge({ status }: { status: string }) {
-  const s = status.toLowerCase();
+  const s = (status || '').toLowerCase();
   let className = 'badge ';
 
   switch (s) {
