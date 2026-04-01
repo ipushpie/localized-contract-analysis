@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { fetchDocument, fetchAnalysis, triggerAnalysis, reanalyseDocument, DocumentItem, AnalysisResult } from '@/lib/api';
 import { StatusBadge } from '@/components/StatusBadge';
 import { AnalysisResultView } from '@/components/AnalysisResult';
+import { ChatPopover } from '@/components/ChatPopover';
 
 export default function DocumentDetailPage() {
   const params = useParams();
@@ -256,6 +257,8 @@ export default function DocumentDetailPage() {
           <p>No analysis yet. Click &quot;Analyze&quot; to run the pre-analysis and staged extraction flow.</p>
         </div>
       )}
+
+      {analysis?.status === 'DONE' && <ChatPopover documentId={id} />}
     </div>
   );
 }

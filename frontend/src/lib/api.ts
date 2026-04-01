@@ -120,3 +120,26 @@ export async function deleteDocument(id: string): Promise<void> {
   const res = await fetch(`${API_URL}/documents/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to delete document');
 }
+
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export async function sendChatMessage(
+  documentId: string,
+  message: string,
+  history: ChatMessage[]
+): Promise<string> {
+  const res = await fetch(`${API_URL}/documents/${documentId}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, history }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Chat request failed');
+  }
+  const data = await res.json();
+  return data.reply as string;
+}
