@@ -29,4 +29,8 @@ export const config = {
   autoAnalyzeOnUpload: (process.env.AUTO_ANALYZE_ON_UPLOAD || 'false') === 'true',
   // Supplier-specific extraction is disabled by default unless explicitly enabled.
   enableSupplierExtraction: (process.env.ENABLE_SUPPLIER_EXTRACTION || 'true') === 'true',
+  // Gemini settings
+  geminiApiKey: process.env.GEMINI_API_KEY || null,
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.1-pro',
+  geminiEmbedModel: process.env.GEMINI_EMBED_MODEL || 'gemini-embedding-001',
 } as const;

@@ -301,8 +301,8 @@ async function runPass(
     logger.warn(TAG, 'runPass: failed to log chunk metrics', { documentId, err: String(logErr) });
   }
 
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const raw = await ollamaGenerateWithRetry(prompt, options?.timeoutMs);
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const raw = await llmGenerateWithRetry(prompt, options?.timeoutMs);
     // Debug log for raw output
     logger.debug(TAG, `LLM Response Received`, { length: raw.length, preview: raw.slice(0, 100) });
     try {
@@ -326,7 +326,7 @@ async function runPass(
         const repairPrompt = `Original prompt:\n${prompt}\n\nModel output:\n${raw}\n\n` +
           'Your task: Return ONLY a single valid JSON object that satisfies the Original prompt. ' +
           'Do NOT include any explanation, markdown, or extra text. Return a single JSON object starting with { and ending with }.';
-        const repaired = await ollamaGenerateWithRetry(repairPrompt, options?.timeoutMs);
+        const repaired = await llmGenerateWithRetry(repairPrompt, options?.timeoutMs);
         // Print repair response to console as well
         // eslint-disable-next-line no-console
         console.error('LLM repair response:\n', repaired);
@@ -418,16 +418,50 @@ async function runCombinedPass(documentId: string): Promise<unknown> {
 
 const MAX_RETRIES = 2;
 
-async function ollamaGenerateWithRetry(prompt: string, overrideTimeoutMs?: number): Promise<string> {
+async function llmGenerateWithRetry(prompt: string, overrideTimeoutMs?: number): Promise<string> {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const content = await ollamaGenerate(prompt, overrideTimeoutMs);
+    const content = await llmGenerate(prompt, overrideTimeoutMs);
     if (content.length > 0) return content;
     logger.warn(TAG, `Empty LLM response, retrying`, { attempt, maxRetries: MAX_RETRIES });
   }
-  throw new Error('Ollama returned empty response after all retries');
+  throw new Error('LLM returned empty response after all retries');
 }
-async function ollamaGenerate(prompt: string, overrideTimeoutMs?: number): Promise<string> {
-  // Enforce JSON-only responses using a system prompt and the chat API.
+
+async function llmGenerate(prompt: string, overrideTimeoutMs?: number): Promise<string> {
+  // Use Gemini if API key is present
+  if (config.geminiApiKey) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{ text: prompt }]
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          topP: 0.95,
+          topK: 40,
+          maxOutputTokens: 16384,
+          responseMimeType: 'application/json'
+        }
+      }),
+      signal: AbortSignal.timeout(overrideTimeoutMs ?? config.llmTimeoutMs),
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`Gemini generateContent failed: ${response.status} ${response.statusText} - ${body}`);
+    }
+
+    const data = (await response.json()) as { candidates?: { content?: { parts?: { text: string }[] } }[] };
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    logger.info(TAG, `Gemini response received`, { chars: content.length });
+    return content;
+  }
+
+  // Fallback to Ollama
   const systemPrompt =
     'You are a contract analysis JSON extraction engine. ' +
     'You MUST respond with ONLY a single valid JSON object and nothing else. ' +

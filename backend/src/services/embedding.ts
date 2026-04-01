@@ -9,6 +9,33 @@ export async function embed(text: string): Promise<number[]> {
   for (let attempt = 1; attempt <= EMBED_RETRIES; attempt++) {
     const t0 = Date.now();
     try {
+      // Use Gemini if API key is present
+      if (config.geminiApiKey) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiEmbedModel}:embedContent?key=${config.geminiApiKey}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: { parts: [{ text }] },
+            outputDimensionality: 768
+          }),
+          signal: AbortSignal.timeout(60_000),
+        });
+
+        if (!response.ok) {
+          const body = await response.text().catch(() => '');
+          throw new Error(`Gemini embed HTTP ${response.status} ${response.statusText} - ${body}`);
+        }
+
+        const data = (await response.json()) as { embedding: { values: number[] } };
+        if (!data.embedding?.values || data.embedding.values.length === 0) {
+          throw new Error(`Gemini embed returned empty embedding for model "${config.geminiEmbedModel}"`);
+        }
+        logger.debug(TAG, `Gemini Embedded`, { dims: data.embedding.values.length, ms: Date.now() - t0, attempt });
+        return data.embedding.values;
+      }
+
+      // Fallback to Ollama
       const response = await fetch(`${config.ollamaBaseUrl}/api/embeddings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -24,7 +51,7 @@ export async function embed(text: string): Promise<number[]> {
       if (!data.embedding || data.embedding.length === 0) {
         throw new Error(`Ollama embed returned empty embedding for model "${config.embedModel}"`);
       }
-      logger.debug(TAG, `Embedded`, { dims: data.embedding.length, ms: Date.now() - t0, attempt });
+      logger.debug(TAG, `Ollama Embedded`, { dims: data.embedding.length, ms: Date.now() - t0, attempt });
       return data.embedding;
     } catch (err) {
       if (attempt === EMBED_RETRIES) {
