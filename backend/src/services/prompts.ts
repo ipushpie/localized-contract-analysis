@@ -34,6 +34,7 @@ Every field in this category MUST be an object: { "value": "...", "description":
 - **contract_classification**: Use: SAAS | IAAS | PAAS | PROFESSIONAL_SERVICES | MANAGED_SERVICES | HARDWARE | RESELLER | NETWORK | OTHER.
 - **total_amount**: Format as "CURRENCY:AMOUNT" (e.g., "EUR:803920.18"). Base contract value excluding taxes.
 - **annual_amount**: Annualized value breakdown. If term is 18 months and total is 150k, format as: "Year 1: CURRENCY:100000.00, Year 2 (6 months): CURRENCY:50000.00".
+- **effective_date**: The legal date the agreement becomes active (YYYY-MM-DD). If "Effective Date" is not explicitly labeled, use the start of the term.
 - **start_date**: YYYY-MM-DD.
 - **end_date**: YYYY-MM-DD.
 - **contract_id**: Unique identifier (reference number, contract number).
@@ -90,7 +91,7 @@ Contract Text:
 
 // FIXED_QUERY & FIXED_PROMPT
 export const FIXED_QUERY =
-  'contract parties provider client supplier product agreement type start date end date payment terms total amount renewal notice contract classification status contract id';
+  'contract parties provider client supplier product agreement type effective date start date end date payment terms total amount renewal notice contract classification status contract id';
 
 export const FIXED_PROMPT = PRE_ANALYSIS_PROMPT;
 export const FIXED_PROMPT_FULL = PRE_ANALYSIS_PROMPT;

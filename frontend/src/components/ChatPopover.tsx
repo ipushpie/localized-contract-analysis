@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { sendChatMessage, ChatMessage } from '@/lib/api';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface ChatPopoverProps {
   documentId: string;
@@ -81,7 +83,15 @@ export function ChatPopover({ documentId }: ChatPopoverProps) {
 
             {messages.map((msg, i) => (
               <div key={i} className={`chat-message chat-message-${msg.role}`}>
-                {msg.content}
+                {msg.role === 'assistant' ? (
+                  <div className="markdown-content">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {msg.content}
+                    </ReactMarkdown>
+                  </div>
+                ) : (
+                  msg.content
+                )}
               </div>
             ))}
 

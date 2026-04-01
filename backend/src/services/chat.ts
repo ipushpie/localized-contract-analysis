@@ -51,7 +51,7 @@ export async function chatWithDocument(
 
   const analysis = await prisma.documentAnalysis.findUnique({
     where: { documentId },
-    select: { status: true, fixedFields: true, sources: true },
+    select: { status: true, fixedFields: true, dynamicFields: true, sources: true },
   });
   if (!analysis) throw new AnalysisNotReadyError('NOT_FOUND');
   if (analysis.status !== 'DONE') throw new AnalysisNotReadyError(analysis.status);
@@ -98,7 +98,7 @@ export async function chatWithDocument(
   const summary = (analysis.sources as any)?.summary?.narrativeSummary ?? null;
 
   const KEY_FIELDS = [
-    'provider', 'client', 'agreement_type', 'total_amount', 'annual_amount',
+    'provider', 'client', 'agreement_type', 'effective_date', 'total_amount', 'annual_amount',
     'start_date', 'end_date', 'contract_status', 'product', 'contract_term', 'payment_terms',
   ];
   const NA_VALUES = new Set(['n/a', 'not available', 'n.a.', 'none', '', 'null', 'undefined']);
@@ -110,6 +110,16 @@ export async function chatWithDocument(
       keyFactLines.push(`${key}: ${val}`);
     }
   }
+
+  // Also include the narrative summary of the scope if available from dynamic fields
+  const dynamic = (analysis.dynamicFields as Record<string, any> | null) ?? {};
+  const description = dynamic['General']?.['contract_description']?.value 
+                   || dynamic['general']?.['contract_description']?.value;
+
+  if (description && !NA_VALUES.has(description.toLowerCase().trim())) {
+    keyFactLines.push(`Scope Overview: ${description}`);
+  }
+
   const keyFacts = keyFactLines.length > 0
     ? keyFactLines.join('\n')
     : 'No structured key facts available.';
@@ -149,7 +159,7 @@ export async function chatWithDocument(
       stream: false,
       keep_alive: -1,
       options: {
-        temperature: 0.3,
+        temperature: 0.1,
         num_ctx: config.llmNumCtx,
         num_predict: 1024,
       },
