@@ -24,7 +24,7 @@ If any field or value is not found, not applicable, or cannot be determined with
 
 **EXTRACTION CATEGORIES:**
 
-1. **Fixed Fields** (MANDATORY nested structure for all 24 fields):
+1. **Fixed Fields** (MANDATORY nested structure for all 21 fields):
 Every field in this category MUST be an object: { "value": "...", "description": "...", "confidence": 0.0 }
 
 - **agreement_type**: Return exactly ONE standardized label: ORDER_FORM, MSA, FA, NDA, SOW, PO, SLA, DPA, BAA, EULA, LICENSE, PROPOSAL, T&C, RESELLER, SCHEDULE, ADDENDUM, AMENDMENT, INVOICE, OTHER.
@@ -42,14 +42,17 @@ Every field in this category MUST be an object: { "value": "...", "description":
 - **contract_term**: Extract duration (e.g., "12 months", "3 years"). If not explicitly stated, calculate and format as months.
 - **payment_terms**: Format as "X Days | Timing" (e.g., "30 Days | Arrears", "45 Days | Advanced").
 - **auto_renewal**: "Yes" or "No".
-- **safe_auto_renewal**: "Yes" if pricing is capped/notice is short, else "No" or "N/A".
 - **renewal_notice_period**: Notice specifically required to prevent auto-renewal (e.g. "3 months"). Convert 90 days to "3 months".
 - **renewal_duration_period**: Length of each renewal term (e.g. "12 months").
-- **intervention_opportunity**: Specific date or event for renegotiation.
 - **relationships**: Any references to other documents (comma-separated).
 - **customer_owner**: Name (Contact Info). Fallback to signing person.
 - **supplier_owner**: Name (Contact Info). Fallback to account manager.
 - **original_filename**: The original filename provided in metadata.
+- **scope**: Extract short scope labels for the main services, products, or deliverables covered by the document. Scope refers to the type of service or product being provided by the supplier (i.e., what is being delivered), not how it is priced, governed, or managed. If the document has multiple distinct scopes, return all of them as a comma-separated list. Keep each scope label short and noun-phrase style, not a sentence or explanation.
+If the document contains a section explicitly describing the services, deliverables, or scope (e.g., sections titled "Services", "Scope", "Statement of Work", or similar), extract precise scope labels from those sections.
+If no such section exists, but the document contains repeated references to specific service types (e.g., "Application Maintenance", "Support Services", "Cloud Services"), extract only those high-level service labels.
+If neither of the above conditions are met, return "N/A".
+Do NOT include section references, pricing or financial terms, legal analysis, governing agreement references, date ranges, business-unit allocations, or explanations. Do not infer or assume services that are not directly supported by the text.
 
 2. **Dynamic Fields** (MANDATORY nested structure organized by categories):
 Extract EVERY relevant term found and organize into these categories:

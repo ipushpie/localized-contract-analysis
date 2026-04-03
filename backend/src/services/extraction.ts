@@ -114,30 +114,33 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       }
     }
 
-    // Pass 3: Supplier-specific extraction (Special Fields)
-    if (config.enableSupplierExtraction) {
-      logger.info(TAG, `Pass 3 starting — supplier fields`, { documentId });
-      const provider = extractProviderValue(fixedFields);
-      try {
-        const rawSpecial = await timedPass('Pass 3 Supplier', () =>
-          runSupplierPass(documentId, provider)
-        );
-        specialFields = (rawSpecial as any)?.special_fields ?? rawSpecial ?? {};
-        await prisma.documentAnalysis.update({
-          where: { documentId },
-          data: { specialFields: specialFields as any, status: 'PARTIAL' },
-        });
-        logger.info(TAG, `Pass 3 (Supplier) saved (PARTIAL)`, { documentId });
-      } catch (err) {
-        logger.warn(TAG, `Pass 3 failed (non-fatal), skipping supplier fields`, { documentId, err: String(err) });
-      }
-    }
+    // Pass 3: Supplier-specific extraction (Special Fields) & Pass 4: Summary - run in parallel
+    const supplierPromise = config.enableSupplierExtraction
+      ? (async () => {
+          logger.info(TAG, `Pass 3 starting — supplier fields`, { documentId });
+          const provider = extractProviderValue(fixedFields);
+          try {
+            const rawSpecial = await timedPass('Pass 3 Supplier', () =>
+              runSupplierPass(documentId, provider)
+            );
+            return (rawSpecial as any)?.special_fields ?? rawSpecial ?? {};
+          } catch (err) {
+            logger.warn(TAG, `Pass 3 failed (non-fatal), skipping supplier fields`, { documentId, err: String(err) });
+            return {};
+          }
+        })()
+      : Promise.resolve({});
 
-    // Pass 4: Summary generation
-    try {
+    const summaryPromise = (async () => {
       logger.info(TAG, `Pass 4 starting — summary generation`, { documentId });
-      const rawSummary = await timedPass('Pass 4 Summary', () => runPassWithAutoExpand(documentId, SUMMARY_QUERY, SUMMARY_PROMPT_FULL));
-      
+      return timedPass('Pass 4 Summary', () => runPassWithAutoExpand(documentId, SUMMARY_QUERY, SUMMARY_PROMPT_FULL));
+    })();
+
+    const [supplierResult, summaryResult] = await Promise.all([supplierPromise, summaryPromise]);
+    specialFields = supplierResult;
+    const rawSummary = summaryResult;
+    
+    try {
       const processingTimeMs = Date.now() - t0;
       const overallConfidence = calculateOverallConfidence(fixedFields, dynamicFields, specialFields);
 
@@ -162,23 +165,23 @@ export async function analyzeDocument(documentId: string): Promise<void> {
           status: 'DONE',
         },
       });
-      logger.info(TAG, `Pass 4 summary saved (DONE)`, { documentId, elapsed: processingTimeMs });
+      logger.info(TAG, `Pass 3+4 saved (DONE)`, { documentId, elapsed: processingTimeMs });
     } catch (err) {
-      logger.warn(TAG, `Pass 4 failed (non-fatal), fallback to DONE status`, { documentId, err: String(err) });
+      logger.warn(TAG, `Pass 3 or 4 failed (non-fatal), fallback to DONE status`, { documentId, err: String(err) });
       await prisma.documentAnalysis.update({
         where: { documentId },
         data: { status: 'DONE', specialFields: specialFields as any },
       });
     }
-
-    logger.info(TAG, `Analysis complete`, { documentId, elapsed: elapsed(t0) });
-  } catch (err) {
-    logger.error(TAG, `Analysis failed`, err as Error, { documentId, elapsed: elapsed(t0) });
+  } catch (outerErr) {
+    logger.error(TAG, `Analysis failed`, outerErr as Error, { documentId, elapsed: elapsed(t0) });
     await prisma.documentAnalysis.update({
       where: { documentId },
-      data: { status: 'FAILED', errorMessage: String(err) },
-    }).catch((dbErr) => logger.error(TAG, 'DB error updating to FAILED', dbErr as Error, { documentId }));
+      data: { status: 'FAILED', errorMessage: String(outerErr) },
+    }).catch((dbErr: unknown) => logger.error(TAG, 'DB error updating to FAILED', dbErr as Error, { documentId }));
   }
+
+  logger.info(TAG, `Analysis complete`, { documentId, elapsed: elapsed(t0) });
 }
 
 function calculateOverallConfidence(fixed: any, dynamic: any, special: any): number {
@@ -301,7 +304,7 @@ async function runPass(
     logger.warn(TAG, 'runPass: failed to log chunk metrics', { documentId, err: String(logErr) });
   }
 
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     const raw = await ollamaGenerateWithRetry(prompt, options?.timeoutMs);
     // Debug log for raw output
     logger.debug(TAG, `LLM Response Received`, { length: raw.length, preview: raw.slice(0, 100) });
