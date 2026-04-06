@@ -6,7 +6,7 @@
 export const OLLAMA_PRE_ANALYSIS_QUERY =
   'entire contract broad analysis metadata fixed fields dynamic fields parties dates money clauses obligations restrictions supplier client contract shell';
 
-export const OLLAMA_PRE_ANALYSIS_PROMPT = `You are an expert contract analysis system designed to perform COMPREHENSIVE document analysis and extract ALL structured data from contract documents using a three-tier categorization approach. The current date is {currentDate}.
+export const OLLAMA_PRE_ANALYSIS_PROMPT = `You are an expert contract analysis system designed to perform COMPREHENSIVE document analysis. The current date is {currentDate}. The original filename is: "{filename}".
 
 **CRITICAL INSTRUCTION: ANALYZE EVERY SECTION, CLAUSE, AND DETAIL**
 You must thoroughly examine the ENTIRE contract document, reading every paragraph, section, clause, subsection, appendix, schedule, exhibit, and attachment. Leave no stone unturned. Extract EVERY piece of structured information, contractual term, condition, obligation, right, restriction, and metadata present in the document.
@@ -29,29 +29,34 @@ If any field or value is not found, not applicable, or cannot be determined with
 1. **Fixed Fields** (MANDATORY nested structure for all 24 fields):
 Every field in this category MUST be an object: { "value": "...", "description": "...", "confidence": 0.0 }
 
-- **agreement_type**: Return exactly ONE standardized label: ORDER_FORM, MSA, FA, NDA, SOW, PO, SLA, DPA, BAA, EULA, LICENSE, PROPOSAL, T&C, RESELLER, SCHEDULE, ADDENDUM, AMENDMENT, INVOICE, OTHER.
-  * *Hierarchy*: Use document title/header first. If multiple, use precedence: AMENDMENT > ADDENDUM > SCHEDULE > SOW > ORDER_FORM > PO > SLA > DPA > BAA > NDA > MSA > FA > LICENSE > EULA > RESELLER > T&C > PROPOSAL > INVOICE > OTHER.
-- **provider**: Service/product provider company name.
-- **client**: Customer/client company name.
-- **contract_classification**: Use: SAAS | IAAS | PAAS | PROFESSIONAL_SERVICES | MANAGED_SERVICES | HARDWARE | RESELLER | NETWORK | OTHER.
-- **total_amount**: Format as "CURRENCY:AMOUNT" (e.g., "EUR:803920.18"). Base contract value excluding taxes.
-- **annual_amount**: Annualized value breakdown. If term is 18 months and total is 150k, format as: "Year 1: CURRENCY:100000.00, Year 2 (6 months): CURRENCY:50000.00".
-- **start_date**: YYYY-MM-DD.
-- **end_date**: YYYY-MM-DD.
-- **contract_id**: Unique identifier (reference number, contract number).
-- **product**: Primary product or service.
-- **contract_status**: "Active", "Inactive", or "Unknown" based on {currentDate}.
-- **contract_term**: Extract duration (e.g., "12 months", "3 years"). If not explicitly stated, calculate and format as months.
-- **payment_terms**: Format as "X Days | Timing" (e.g., "30 Days | Arrears", "45 Days | Advanced").
-- **auto_renewal**: "Yes" or "No".
-- **safe_auto_renewal**: "Yes" if pricing is capped/notice is short, else "No" or "N/A".
-- **renewal_notice_period**: Notice specifically required to prevent auto-renewal (e.g. "3 months"). Convert 90 days to "3 months".
-- **renewal_duration_period**: Length of each renewal term (e.g. "12 months").
-- **intervention_opportunity**: Specific date or event for renegotiation.
-- **relationships**: Any references to other documents (comma-separated).
-- **customer_owner**: Name (Contact Info). Fallback to signing person.
-- **supplier_owner**: Name (Contact Info). Fallback to account manager.
-- **original_filename**: The original filename provided in metadata.
+1. **agreement_type**: Return exactly ONE standardized label: ORDER_FORM, MSA, FA, NDA, SOW, PO, SLA, DPA, BAA, EULA, LICENSE, PROPOSAL, T&C, RESELLER, SCHEDULE, ADDENDUM, AMENDMENT, INVOICE, OTHER.
+    * *Hierarchy*: If "Service opdracht", use ORDER_FORM. Otherwise use document title/header first. If multiple, use precedence: AMENDMENT > ADDENDUM > SCHEDULE > SOW > ORDER_FORM > PO > SLA > DPA > BAA > NDA > MSA > FA > LICENSE > EULA > RESELLER > T&C > PROPOSAL > INVOICE > OTHER.
+2. **provider**: Service/product provider company name.
+3. **client**: Customer/client company name.
+4. **product**: Primary product or service being contracted (ensure you include all relevant modules like 'Managed Services' alongside platforms like eMagiz and Tooling).
+5. **total_amount**: Format as "CURRENCY_CODE:AMOUNT" (e.g., "USD:1250000.00", "EUR:808668.96"). **CRITICAL:** Extract the highest explicitly stated total base contract value. DO NOT sum up line items yourself, as this leads to double-counting. If the document provides a final grand total (e.g., "Total excluding VAT: €803,920.18"), use exactly that number. Exclude taxes.
+6. **annual_amount**: Year-by-year breakdown of contract value excluding taxes. If a yearly total is stated (e.g., Year 1: €803,920.18), use exactly that.
+7. **start_date**: YYYY-MM-DD.
+8. **end_date**: YYYY-MM-DD.
+9. **contract_id**: Unique identifier (reference number, contract number). Fallback to exact document title.
+10. **contract_classification**: Use: SAAS | IAAS | PAAS | PROFESSIONAL_SERVICES | MANAGED_SERVICES | HARDWARE | RESELLER | NETWORK | OTHER. 
+    * *Priority*: If a software platform (eMagiz/Tooling) is involved, prioritize SAAS over MANAGED_SERVICES.
+11. **contract_status**: "Active", "Inactive", or "Unknown" based on {currentDate}.
+12. **contract_term**: Extract duration (e.g., "12 months", "3 years"). If not explicitly stated, calculate from start/end dates.
+13. **payment_terms**: Format as "X Days | Timing" (e.g., "30 Days | Arrears", "45 Days | Advanced").
+14. **auto_renewal**: "Yes" or "No".
+15. **renewal_notice_period**: Notice period required to prevent renewal (ALWAYS format as "X months", e.g., "3 months").
+16. **renewal_duration_period**: Duration of each renewal term (ALWAYS format as "X months", e.g., "12 months").
+17. **relationships**: Any references to other documents (comma-separated document names/IDs). Pay close attention to references like 'Mantelovereenkomst', 'Nadere Overeenkomst', or explicitly mentioned 'SLA' (e.g., 'bijlage 2').
+18. **customer_owner**: The person who owns the agreement on the customer side. 
+    **CRITICAL**: Start by checking the signature block at the end of the document. If a signatory is named there (e.g., Willem Jan van Tongeren), use that person over functional owners mentioned earlier.
+    **PRIORITY**: 1. Signatory > 2. Functional Owner.
+    Format as "Name (Signatory / Role / Contact Info)".
+19. **supplier_owner**: The person who owns the agreement on the supplier side. 
+    **CRITICAL**: You MUST look at the very end of the document in the signature block (e.g. 'Ondertekend namens CAPE... Naam: Niek Staman'). DO NOT output N/A if a signature name exists anywhere.
+    **PRIORITY**: 1. Signatory > 2. Account Manager. Check signature blocks!
+    Format as "Name (Signatory / Role / Contact Info)".
+20. **original_filename**: Use "{filename}".
 
 2. **Dynamic Fields** (MANDATORY nested structure organized by categories):
 Extract EVERY relevant term found and organize into these categories:
@@ -108,11 +113,26 @@ export const OLLAMA_DYNAMIC_PROMPT = `You are an expert contract analysis system
 **DYNAMIC FIELDS TO EXTRACT:**
 Extract EVERY relevant contract-specific field found in the document and organize them into the following categories:
 
-**Use rights & restrictions:** Usage limitations, access restrictions, permitted uses, prohibited activities, etc.
-**General:** MUST include a "contract_description" (narrative of scope, value justification, section references).
-**Legal terms:** Liability, indemnification, confidentiality, governing law, IP rights.
-**Commercial terms:** Payment schedules, billing, currency, tax, financial penalties.
-**Data protection:** GDPR, security measures, retention policies.
+**Use rights & restrictions:** Usage limitations, access restrictions, permitted uses, prohibited activities, user limitations, capacity constraints, geographic restrictions, time-based limitations, scope of use, operational boundaries, service limitations, feature restrictions, and ALL usage-related terms and constraints.
+
+**General:** General contract terms, basic provisions, standard clauses, administrative details, general obligations, miscellaneous provisions, definitions, interpretations, general conditions, standard terms, boilerplate clauses, general requirements, service level agreements, performance metrics, uptime guarantees, response times, support levels, maintenance schedules, delivery timelines, quality standards, operational commitments, availability requirements, capacity guarantees, throughput specifications, error rates, resolution times, escalation procedures, performance penalties, technical specifications, training provisions, implementation requirements, operational constraints, system requirements, integration specifications, API limitations, bandwidth requirements, security standards, backup procedures, disaster recovery plans, insurance requirements, risk allocation clauses, force majeure provisions, business continuity requirements, security audits, penetration testing, vulnerability assessments, auto-renewal provisions, notice periods, termination rights, cancellation procedures, post-termination obligations, transition requirements, contract continuation terms, renewal pricing, termination fees, wind-down procedures, data return obligations, and ALL other general contractual provisions.
+
+**Legal terms:** Liability limitations, indemnification clauses, confidentiality periods, data privacy compliance requirements, audit rights, regulatory compliance obligations, legal protections, governing law, jurisdiction, dispute resolution procedures, arbitration clauses, mediation requirements, legal notices, compliance certifications, regulatory reporting, intellectual property rights, warranties, representations, termination for convenience (e.g., explicit notice periods for early termination), and ALL legal and compliance terms.
+
+**Commercial terms:** Payment schedules, billing frequencies, late fees, currency provisions, tax responsibilities, pricing models, cost escalation clauses, financial penalties, discounts, rebates, credits, adjustments, true-up provisions, budget caps, spending limits, invoice procedures, payment methods, banking details, financial reporting requirements, audit rights, service level credits, performance bonuses, and ALL other monetary obligations and financial arrangements.
+
+**Data protection:** Data privacy requirements, data security measures, data retention policies, data processing terms, data transfer restrictions, data subject rights, GDPR compliance, data breach notification procedures, data encryption requirements, data backup procedures, data deletion obligations, data access controls, and ALL data protection and privacy-related terms.
+
+**MANDATORY GRANULAR FIELDS (Include these flat fields inside relevant categories if found):**
+**CRITICAL INSTRUCTION**: These MUST be extracted as separate, independent distinct fields in the JSON output. Do NOT bundle them inside a single 'pricing_structure' description. Use the exact keys below:
+- **sla_annual_cost**: Annual cost specifically for SLA/Support services.
+- **emagiz_annual_cost**: Annual cost specifically for eMagiz services.
+- **tooling_annual_cost**: Annual cost specifically for tooling.
+- **sla_work_rate_2025**: Hourly/daily rate for SLA work.
+- **consultancy_rate_2025**: Hourly/daily rate for consultancy.
+- **cost_breakdown_by_service**: Detailed breakdown of costs by service line/type.
+- **cost_breakdown_by_business_unit**: Detailed breakdown of costs by IT/business unit.
+- **budgetary_limitation_on_new_work**: Any reservation amount or limitation mentioned for new assignments.
 
 **MANDATORY SCHEMA:**
 Every field MUST be an object:
@@ -120,15 +140,29 @@ Every field MUST be an object:
 - description: EXHAUSTIVE business context + source reference + conflict notes.
 - confidence: Score (0.0-1.0)
 
-**⚠️ CRITICAL EXTRACTION RULE: CERTAINTY (>=0.95)**
-Only extract business-critical clauses when you are VERY confident. If any value is missing or uncertain, return "N/A" for the value with confidence 0.1.
+**MANDATORY DYNAMIC FIELD - Contract Description:**
+Always include a "contract_description" field in the "General" category with a comprehensive description of the contract including purpose, scope, and value justification.
 
+**⚠️ CRITICAL EXTRACTION RULE: ONLY EXTRACT BUSINESS-CRITICAL CLAUSES WITH 95%+ CERTAINTY**
+
+**DO NOT EXTRACT if:**
+- You have any doubt about whether the clause truly exists in the document.
+- The clause is only weakly implied or requires interpretation.
+- The mention is passing/incidental or lacks specific details/values.
+- It could be inferred or assumed but is not explicitly written.
+
+**Business-Critical Clauses Worth Extracting:**
+- Payment terms, pricing, and financial obligations.
+- Term and renewal conditions with specific dates/periods.
+- Liability caps and indemnification with defined limits.
+- Data protection requirements with specific standards.
+- Performance obligations, service levels, and termination conditions.
 
 **OUTPUT FORMAT:**
 {
   "dynamic_fields": {
     "Use rights & restrictions": { ... },
-    "General": { ... },
+    "General": { "contract_description": { "value": "...", "description": "...", "confidence": 0.9 } },
     "Legal terms": { ... },
     "Commercial terms": { ... },
     "Data protection": { ... }
@@ -154,6 +188,12 @@ export const OLLAMA_SUPPLIER_PROMPT = `You are an expert contract analyst specia
 **STANDARDIZED FIELDS TO EXTRACT:**
 {SUPPLIER_FIELD_LIST}
 
+**MANDATORY SPECIAL CONTEXT:** Ensure you extract:
+- Source-code escrow references (e.g. Softcrow) and costs.
+- Detailed licence metrics (e.g. per flowpack, per user, per app).
+- Associated Service/Org IDs or internal routing references.
+- Document order-of-precedence rules.
+
 **OUTPUT FORMAT:**
 {
   "special_fields": {
@@ -172,14 +212,14 @@ export const OLLAMA_SUPPLIER_PROMPT_FULL = OLLAMA_SUPPLIER_PROMPT;
 export const OLLAMA_SUMMARY_QUERY =
   'contract summary narrative core identification term dates financials risk liability critical provisions analyst notations';
 
-export const OLLAMA_SUMMARY_PROMPT = `You are an expert contract analyst and a highly precise AI data extraction engine for a CLM tool. Your task is to analyze the text and generate a comprehensive, structured JSON summary for a user interface.
+export const OLLAMA_SUMMARY_PROMPT = `You are an expert contract analyst and a highly precise AI data extraction engine for a CLM tool. Your task is to analyze the text and generate a comprehensive, structured JSON summary for a user interface. The original filename is "{filename}".
 
 The JSON must follow this exact structure:
 {
   "narrativeSummary": "2-3 sentence summary paragraph. Document type, parties, value, service period, purpose.",
   "coreIdentification": {
     "documentType": "...",
-    "contractId": "...",
+    "contractId": "The unique contract ID. If not found, use exact document title.",
     "client": "...",
     "supplier": "..."
   },
@@ -193,11 +233,11 @@ The JSON must follow this exact structure:
     "noticePeriodForTermination": "..."
   },
   "financials": {
-    "totalContractValue": "...",
+    "totalContractValue": "Extract the explicitly stated final total contract value (e.g., '€803,920.18'). DO NOT SUM UP line items yourself, as this causes double-counting. Look for the grand total.",
     "paymentTerms": "...",
     "invoicingFrequency": "...",
     "refundability": "...",
-    "taxResponsibility": "...",
+    "taxResponsibility": "MUST identify if prices are 'exclusive of BTW', 'including tax', etc.",
     "priceAdjustmentClause": "...",
     "latePaymentPenalty": "..."
   },
@@ -237,7 +277,7 @@ export const OLLAMA_SUMMARY_PROMPT_FULL = OLLAMA_SUMMARY_PROMPT;
 export const GEMINI_PRE_ANALYSIS_QUERY =
   'entire contract broad analysis metadata fixed fields dynamic fields parties dates money clauses obligations restrictions supplier client contract shell';
 
-export const GEMINI_PRE_ANALYSIS_PROMPT = `You are an expert contract analysis system designed to perform COMPREHENSIVE document analysis and extract ALL structured data from contract documents using a three-tier categorization approach.
+export const GEMINI_PRE_ANALYSIS_PROMPT = `You are an expert contract analysis system designed to perform COMPREHENSIVE document analysis and extract ALL structured data from contract documents using a three-tier categorization approach. The original filename of the document is: "{filename}".
 
 **CRITICAL INSTRUCTION: ANALYZE EVERY SECTION, CLAUSE, AND DETAIL**
 
@@ -347,9 +387,9 @@ Return a valid JSON object with this exact structure:
     "auto_renewal": {"value": "No", "confidence": 0.90},
     "renewal_notice_period": {"value": "3 months", "confidence": 0.85},
     "relationships": {"value": "Master Agreement dated Jan 2024,Data Processing Addendum,Schedule A", "confidence": 0.80},
-    "customer_owner": {"value": "John Smith (john.smith@customer.com)", "confidence": 0.85},
-    "supplier_owner": {"value": "Jane Doe (jane.doe@supplier.com)", "confidence": 0.85},
-    "original_filename": {"value": "filename.pdf", "confidence": 1.0}
+    "customer_owner": {"value": "Willem Jan van Tongeren (Signatory)", "confidence": 0.95},
+    "supplier_owner": {"value": "Niek Staman (Signatory)", "confidence": 0.95},
+    "original_filename": {"value": "{filename}", "confidence": 1.0}
   },
   "dynamic_fields": {
     "Use rights & restrictions": {
@@ -424,7 +464,8 @@ Contract Text:
 export const GEMINI_FIXED_QUERY =
   'contract parties provider client supplier product agreement type start date end date payment terms total amount renewal notice contract classification status contract id';
 
-export const GEMINI_FIXED_PROMPT = `You are an expert contract analysis system. The current date is {currentDate}. Extract ONLY the following 20 fixed fields from this contract document with brief, clear descriptions.
+export const GEMINI_FIXED_PROMPT = `You are an expert contract analysis system. The current date is {currentDate}. The original filename of the document is: "{filename}".
+Extract ONLY the following 20 fixed fields from this contract document with brief, clear descriptions.
 
 **CRITICAL INSTRUCTION: COMPREHENSIVE DOCUMENT ANALYSIS FOR CONFLICTS**
 
@@ -440,19 +481,20 @@ For each field extraction, you must:
 Return exactly ONE agreement_type from the allowed values. Prioritise explicit agreement type detection in the document over inferred classification.
  
 **Allowed values (use standardized abbreviations):**
-MSA, FA, NDA, SOW, PO, ORDER_FORM, SLA, DPA, BAA, EULA, LICENSE, PROPOSAL, T&C, RESELLER, SCHEDULE, ADDENDUM, AMENDMENT, INVOICE, OTHER
+ORDER_FORM, MSA, FA, NDA, SOW, PO, SLA, DPA, BAA, EULA, LICENSE, PROPOSAL, T&C, RESELLER, SCHEDULE, ADDENDUM, AMENDMENT, INVOICE, OTHER
  
 **OUTPUT RULES:**
 - Output exactly one label (single token from the allowed values).
+- If the document is a "Service opdracht", map it to ORDER_FORM.
 - Do not invent new labels.
 - Do not output multiple values.
 - If multiple types appear, apply the hierarchy rules below.
 - If uncertain, return OTHER.
-- Once a classification is determined under STEP 1 or STEP 2, STOP and do not continue to STEP 3.
  
 **STEP 1 — EXPLICIT AGREEMENT TYPE DETECTION (highest priority)**
 Search the document for explicit statements that define the document type, such as:
 - Title/header. If the title/header contains an explicit type, the title/header overrides any other type references in the document.
+- Specifically: "Service opdracht" -> ORDER_FORM.
 - Introductory clauses: e.g., "This [x] agreement…”
 ... (abbreviated rules based on snippet but preserving logic)
 
@@ -473,6 +515,7 @@ Search the document for explicit statements that define the document type, such 
 8. **end_date**: Contract expiration date in YYYY-MM-DD format
 9. **contract_id**: Any unique identifier (contract number, reference number, agreement ID)
 10. **contract_classification**: Use only these values: SAAS|IAAS|PAAS|PROFESSIONAL_SERVICES|MANAGED_SERVICES|HARDWARE|RESELLER|NETWORK|OTHER
+    **PRIORITY**: If the contract involves a software platform (like eMagiz or Tooling) alongside services, prioritize SAAS over MANAGED_SERVICES. Only use MANAGED_SERVICES or PROFESSIONAL_SERVICES if NO software platform/license is involved.
 11. **contract_status**: Determine current contract status ("Active" if currently in effect, "Inactive" if expired or not yet started, "Unknown" if dates are unclear or missing)
 12. **contract_term**: Extract contract duration from document text (e.g., "24 months", "3 years", "36 months"). If not explicitly stated, calculate from start_date and end_date and format as months (e.g., "17 months"). Use "N/A" if cannot be determined.
 13. **payment_terms**: Extract payment terms including duration and timing. Format as "X Days | Advanced" or "X Days | Arrears" (e.g., "30 Days | Advanced", "45 Days | Arrears", "Net 30 Days | Arrears"). If only duration is mentioned without timing, default to "Arrears". Use "N/A" if not specified.
@@ -480,9 +523,14 @@ Search the document for explicit statements that define the document type, such 
 15. **renewal_notice_period**: Notice period required to prevent renewal (ALWAYS format as "X months" only, e.g., "1 month", "3 months", "6 months", "12 months"). This is NOT the general termination or cancellation notice period—extract only the notice period specifically required to prevent automatic renewal of the contract. Convert days to months: 30 days = "1 month", 60 days = "2 months", 90 days = "3 months". Use "N/A" if not specified)
 16. **renewal_duration_period**: If the contract auto-renews, specify the duration period for each renewal cycle (ALWAYS format as "X months" only, e.g., "12 months", "24 months", "36 months"). This is the length of each automatic renewal period. Convert years to months: 1 year = "12 months", 2 years = "24 months". Use "N/A" if auto_renewal is "No" or if renewal duration is not specified)
 17. **relationships**: Any references to other documents mentioned in this contract (comma-separated string of document names, contract IDs, file names, or any document references found in the text; capture exactly as mentioned; "N/A" if no references found)
-18. **customer_owner**: The person who owns the agreement on the customer/client side or should be contacted regarding the agreement from the customer organization. Format as "Name (Contact Info)" if available, otherwise just the name. Use "N/A" if not found.
-19. **supplier_owner**: The person who owns the agreement on the supplier/provider side or should be contacted regarding the agreement from the supplier organization. Format as "Name (Contact Info)" if available, otherwise just the name. Use "N/A" if not found.
-20. **original_filename**: The original filename of the uploaded document
+18. **customer_owner**: The person who owns the agreement on the customer/client side. 
+    **PRIORITY**: 1. Signatory (authorized representative signing the document) > 2. Functional Owner (e.g., Project Manager, Contract Manager) > 3. N/A.
+    Format as "Name (Signatory / Contact Info / Role)" if available, otherwise just the name. Use "N/A" if not found.
+19. **supplier_owner**: The person who owns the agreement on the supplier/provider side. 
+    **INSTRUCTION**: Thoroughly check the signature block and introductory parties section. 
+    **PRIORITY**: 1. Signatory > 2. Account Manager / Sales Rep > 3. N/A.
+    Format as "Name (Signatory / Contact Info / Role)" if available, otherwise just the name. Use "N/A" if not found. 
+20. **original_filename**: Use the value provided in the metadata: "{filename}"
 
 **DESCRIPTION REQUIREMENTS:**
 For each field, provide a brief, plain description that includes:
@@ -542,6 +590,12 @@ Extract EVERY relevant contract-specific field found in the document and organiz
 **Commercial terms:** Payment schedules, billing frequencies, late fees, currency provisions, tax responsibilities, pricing models, cost escalation clauses, financial penalties, discounts, rebates, credits, adjustments, true-up provisions, budget caps, spending limits, invoice procedures, payment methods, banking details, financial reporting requirements, audit rights, service level credits, performance bonuses, and ALL other monetary obligations and financial arrangements.
 
 **Data protection:** Data privacy requirements, data security measures, data retention policies, data processing terms, data transfer restrictions, data subject rights, GDPR compliance, data breach notification procedures, data encryption requirements, data backup procedures, data deletion obligations, data access controls, and ALL data protection and privacy-related terms.
+
+**MANDATORY GRANULAR FIELDS (Include these flat fields inside relevant categories if found):**
+- **sla_annual_cost**: Annual cost specifically for SLA/Support services.
+- **emagiz_annual_cost**: Annual cost specifically for eMagiz services.
+- **tooling_annual_cost**: Annual cost specifically for tooling.
+- **budgetary_limitation_on_new_work**: Any reservation amount or limitation mentioned for new assignments.
 
 Use descriptive field names that clearly indicate the nature of each extracted term (e.g., "renewal_notice_period", "liability_cap", "support_response_time", "data_retention_period", "security_audit_frequency", "ip_ownership_rights"). Each dynamic field must include:
 - value: Extracted value from the contract
@@ -654,14 +708,14 @@ export const GEMINI_SUPPLIER_PROMPT_FULL = GEMINI_SUPPLIER_PROMPT;
 export const GEMINI_SUMMARY_QUERY =
   'contract summary narrative core identification term dates financials risk liability critical provisions analyst notations';
 
-export const GEMINI_SUMMARY_PROMPT = `You are an expert contract analyst and a highly precise AI data extraction engine for a CLM tool. Your task is to analyze the text and generate a comprehensive, structured JSON summary for a user interface.
+export const GEMINI_SUMMARY_PROMPT = `You are an expert contract analyst and a highly precise AI data extraction engine for a CLM tool. Your task is to analyze the text and generate a comprehensive, structured JSON summary for a user interface. The original filename is: "{filename}".
 
 The JSON must follow this exact structure:
 {
   "narrativeSummary": "2-3 sentence summary paragraph. Document type, parties, value, service period, purpose.",
   "coreIdentification": {
     "documentType": "...",
-    "contractId": "...",
+    "contractId": "The unique contract ID. If not explicitly found, use the exact title of the document as the contract ID.",
     "client": "...",
     "supplier": "..."
   },

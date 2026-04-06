@@ -47,6 +47,12 @@ export async function analyzeDocument(documentId: string): Promise<void> {
   const t0 = Date.now();
   try {
     // Read any existing partial results so we can resume from the right pass
+    const document = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { filename: true }
+    });
+    const filename = document?.filename ?? "unknown.pdf";
+
     const prior = await prisma.documentAnalysis.findUnique({ where: { documentId } });
     const hasPass1 = prior?.fixedFields != null && prior.fixedFields !== null;
     const hasPass2 = prior?.dynamicFields != null && prior.dynamicFields !== null;
@@ -58,7 +64,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       update: { status: 'RUNNING', errorMessage: null },
     });
 
-    logger.info(TAG, `Starting analysis`, { documentId, resumeFrom: hasPass2 ? 'Pass 4' : hasPass1 ? 'Pass 2' : 'Pass 1' });
+    logger.info(TAG, `Starting analysis`, { documentId, filename, resumeFrom: hasPass2 ? 'Pass 4' : hasPass1 ? 'Pass 2' : 'Pass 1' });
 
     // Initialize local variables from previous results if available
     let fixedFields: any = prior?.fixedFields || null;
@@ -67,7 +73,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
     let sources: any = prior?.sources || {};
 
     if (!hasPass1 && !hasPass2) {
-      const combined = await timedPass('Combined Pass 1+2', () => runCombinedPass(documentId));
+      const combined = await timedPass('Combined Pass 1+2', () => runCombinedPass(documentId, filename));
       // Normalize LLM output shapes
       const rawFixed = (combined as any)?.fixed_fields ?? null;
       const rawDynamic = (combined as any)?.dynamic_fields ?? null;
@@ -94,7 +100,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
         fixedFields = prior!.fixedFields;
         logger.info(TAG, `Pass 1 skipped — using existing fixedFields`, { documentId });
       } else {
-        const rawFixed = await timedPass('Pass 1 Fixed', () => runPassWithAutoExpand(documentId, FIXED_QUERY, FIXED_PROMPT_FULL));
+        const rawFixed = await timedPass('Pass 1 Fixed', () => runPassWithAutoExpand(documentId, FIXED_QUERY, FIXED_PROMPT_FULL, filename));
         const normalizedFixed = normalizeFixedFields(rawFixed);
         applyContractStatusRule(normalizedFixed);
         fixedFields = normalizedFixed;
@@ -106,7 +112,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
         dynamicFields = prior!.dynamicFields;
         logger.info(TAG, `Pass 2 skipped — using existing dynamicFields`, { documentId });
       } else {
-        const rawDynamic = await timedPass('Pass 2 Dynamic', () => runPassWithAutoExpand(documentId, DYNAMIC_QUERY, DYNAMIC_PROMPT_FULL));
+        const rawDynamic = await timedPass('Pass 2 Dynamic', () => runPassWithAutoExpand(documentId, DYNAMIC_QUERY, DYNAMIC_PROMPT_FULL, filename));
         const normalizedDynamic = normalizeDynamicFields(rawDynamic);
         dynamicFields = normalizedDynamic;
         await prisma.documentAnalysis.update({ where: { documentId }, data: { status: 'PARTIAL', dynamicFields: normalizedDynamic as any } });
@@ -120,7 +126,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       const provider = extractProviderValue(fixedFields);
       try {
         const rawSpecial = await timedPass('Pass 3 Supplier', () =>
-          runSupplierPass(documentId, provider)
+          runSupplierPass(documentId, provider, filename)
         );
         specialFields = (rawSpecial as any)?.special_fields ?? rawSpecial ?? {};
         await prisma.documentAnalysis.update({
@@ -136,7 +142,7 @@ export async function analyzeDocument(documentId: string): Promise<void> {
     // Pass 4: Summary generation
     try {
       logger.info(TAG, `Pass 4 starting — summary generation`, { documentId });
-      const rawSummary = await timedPass('Pass 4 Summary', () => runPassWithAutoExpand(documentId, SUMMARY_QUERY, SUMMARY_PROMPT_FULL));
+      const rawSummary = await timedPass('Pass 4 Summary', () => runPassWithAutoExpand(documentId, SUMMARY_QUERY, SUMMARY_PROMPT_FULL, filename));
       
       const processingTimeMs = Date.now() - t0;
       const overallConfidence = calculateOverallConfidence(fixedFields, dynamicFields, specialFields);
@@ -223,6 +229,7 @@ async function runPass(
   documentId: string,
   queryText: string,
   promptTemplate: string,
+  filename: string,
   options?: { includeAllChunks?: boolean; chunkTruncate?: number; timeoutMs?: number; chunkLimit?: number }
 ): Promise<unknown> {
   const queryEmbedding = await getCachedEmbedding(queryText);
@@ -272,6 +279,7 @@ async function runPass(
   const prompt = promptTemplate
     .replace('{currentDate}', currentDate)
     .replace('{exclusionText}', '')
+    .replace('{filename}', filename)
     .replace('{context}', context);
 
   // Log detailed chunk / prompt metrics for debugging and analysis
@@ -350,17 +358,19 @@ async function runPass(
 async function runPassWithAutoExpand(
   documentId: string,
   queryText: string,
-  promptTemplate: string
+  promptTemplate: string,
+  filename: string
 ): Promise<unknown> {
   // Always use the configured target chunk count for a single pass. Do not
   // retry or restart the model run based on how many fields are empty.
   const target = (config as any).targetChunks ?? 15;
-  return runPass(documentId, queryText, promptTemplate, { chunkLimit: target });
+  return runPass(documentId, queryText, promptTemplate, filename, { chunkLimit: target });
 }
 
 async function runSupplierPass(
   documentId: string,
-  supplierRaw: string | null
+  supplierRaw: string | null,
+  filename: string
 ): Promise<unknown> {
   // Force use of 'general' mapping for all documents as requested
   const key = 'general';
@@ -409,11 +419,11 @@ async function runSupplierPass(
   // Debug log for prompt size
   logger.info(TAG, `Pass 3 prompt prepared`, { promptChars: prompt.length, key });
 
-  return runPass(documentId, query, prompt);
+  return runPass(documentId, query, prompt, filename);
 }
 
-async function runCombinedPass(documentId: string): Promise<unknown> {
-  return runPassWithAutoExpand(documentId, PRE_ANALYSIS_QUERY, PRE_ANALYSIS_PROMPT);
+async function runCombinedPass(documentId: string, filename: string): Promise<unknown> {
+  return runPassWithAutoExpand(documentId, PRE_ANALYSIS_QUERY, PRE_ANALYSIS_PROMPT, filename);
 }
 
 const MAX_RETRIES = 2;
