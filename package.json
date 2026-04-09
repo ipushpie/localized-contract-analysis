@@ -1,0 +1,27 @@
+{
+  "name": "mait-mvp",
+  "version": "1.0.0",
+  "description": "Upload contracts → extract text → chunk → embed → analyze with local Ollama LLM.",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "dev": "concurrently -n backend,frontend -c green,blue \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "db:up": "docker compose up db -d",
+    "db:down": "docker compose stop db",
+    "prisma:deploy": "npm --prefix backend run prisma:migrate",
+    "stop:ports": "fuser -k 3000/tcp 3001/tcp 8000/tcp >/dev/null 2>&1 || true",
+    "dev:clean": "npm run stop:ports && npm run dev",
+    "db:vector": "docker compose exec -T db psql -U postgres -d mvp -c \"CREATE EXTENSION IF NOT EXISTS vector;\" -c \"ALTER TABLE \\\"Chunk\\\" ADD COLUMN IF NOT EXISTS embedding vector(768);\" -c \"CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON \\\"Chunk\\\" USING hnsw (embedding vector_cosine_ops);\"",
+    "local:setup": "npm run db:up && npm run prisma:deploy && npm run db:vector",
+    "local": "npm run local:setup && npm run dev"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "private": true,
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

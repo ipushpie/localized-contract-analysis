@@ -5,13 +5,9 @@ import { logger, elapsed } from '../utils/logger';
 
 const TAG = 'Analysis';
 import {
-  PRE_ANALYSIS_QUERY,
-  PRE_ANALYSIS_PROMPT,
   FIXED_QUERY,
-  FIXED_PROMPT,
   FIXED_PROMPT_FULL,
   DYNAMIC_QUERY,
-  DYNAMIC_PROMPT,
   DYNAMIC_PROMPT_FULL,
   SUPPLIER_PROMPT,
   SUPPLIER_PROMPT_FULL,
@@ -49,13 +45,15 @@ export async function analyzeDocument(documentId: string): Promise<void> {
     // Read any existing partial results so we can resume from the right pass
     const document = await prisma.document.findUnique({
       where: { id: documentId },
-      select: { filename: true }
+      select: { filename: true, rawText: true }
     });
     const filename = document?.filename ?? "unknown.pdf";
+    const rawText = document?.rawText ?? '';
 
     const prior = await prisma.documentAnalysis.findUnique({ where: { documentId } });
     const hasPass1 = prior?.fixedFields != null && prior.fixedFields !== null;
-    const hasPass2 = prior?.dynamicFields != null && prior.dynamicFields !== null;
+    const hasPass2 = prior?.specialFields != null && prior.specialFields !== null;
+    const hasPass3 = prior?.dynamicFields != null && prior.dynamicFields !== null;
 
     // Upsert analysis row → RUNNING
     await prisma.documentAnalysis.upsert({
@@ -64,7 +62,11 @@ export async function analyzeDocument(documentId: string): Promise<void> {
       update: { status: 'RUNNING', errorMessage: null },
     });
 
-    logger.info(TAG, `Starting analysis`, { documentId, filename, resumeFrom: hasPass2 ? 'Pass 4' : hasPass1 ? 'Pass 2' : 'Pass 1' });
+    logger.info(TAG, `Starting analysis`, {
+      documentId,
+      filename,
+      resumeFrom: hasPass3 ? 'Pass 4' : hasPass2 ? 'Pass 3' : hasPass1 ? 'Pass 2' : 'Pass 1'
+    });
 
     // Initialize local variables from previous results if available
     let fixedFields: any = prior?.fixedFields || null;
@@ -72,71 +74,68 @@ export async function analyzeDocument(documentId: string): Promise<void> {
     let specialFields: any = prior?.specialFields || {};
     let sources: any = prior?.sources || {};
 
-    if (!hasPass1 && !hasPass2) {
-      const combined = await timedPass('Combined Pass 1+2', () => runCombinedPass(documentId, filename));
-      // Normalize LLM output shapes
-      const rawFixed = (combined as any)?.fixed_fields ?? null;
-      const rawDynamic = (combined as any)?.dynamic_fields ?? null;
-      
-      const normalizedFixed = normalizeFixedFields(rawFixed);
-      applyContractStatusRule(normalizedFixed);
-      const normalizedDynamic = normalizeDynamicFields(rawDynamic);
-      
-      fixedFields = normalizedFixed;
-      dynamicFields = normalizedDynamic;
-
+    if (hasPass1) {
+      fixedFields = prior!.fixedFields;
+      logger.info(TAG, `Pass 1 skipped — using existing fixedFields`, { documentId });
+      // Always apply deterministic overrides, even to cached results
+      applyDeterministicFixedFieldOverrides(fixedFields, rawText);
+      applyContractStatusRule(fixedFields);
       await prisma.documentAnalysis.update({
         where: { documentId },
-        data: {
-          fixedFields: normalizedFixed as any,
-          dynamicFields: normalizedDynamic as any,
-          modelName: config.generationModel,
-          status: 'PARTIAL',
-        },
+        data: { fixedFields: fixedFields as any, status: 'PARTIAL' },
       });
-      logger.info(TAG, `Combined pass saved`, { documentId });
     } else {
-      if (hasPass1) {
-        fixedFields = prior!.fixedFields;
-        logger.info(TAG, `Pass 1 skipped — using existing fixedFields`, { documentId });
-      } else {
-        const rawFixed = await timedPass('Pass 1 Fixed', () => runPassWithAutoExpand(documentId, FIXED_QUERY, FIXED_PROMPT_FULL, filename));
-        const normalizedFixed = normalizeFixedFields(rawFixed);
-        applyContractStatusRule(normalizedFixed);
-        fixedFields = normalizedFixed;
-        await prisma.documentAnalysis.update({ where: { documentId }, data: { fixedFields: normalizedFixed as any, modelName: config.generationModel } });
-        logger.info(TAG, `Pass 1 saved`, { documentId });
-      }
+      const rawFixed = await timedPass('Pass 1 Fixed', () => runPassWithAutoExpand(documentId, FIXED_QUERY, FIXED_PROMPT_FULL, filename));
+      const normalizedFixed = normalizeFixedFields(rawFixed);
+      applyDeterministicFixedFieldOverrides(normalizedFixed, rawText);
+      applyContractStatusRule(normalizedFixed);
+      fixedFields = normalizedFixed;
+      await prisma.documentAnalysis.update({
+        where: { documentId },
+        data: { fixedFields: normalizedFixed as any, modelName: config.generationModel, status: 'PARTIAL' },
+      });
+      logger.info(TAG, `Pass 1 saved`, { documentId });
+    }
 
+    // Pass 2: Supplier-specific extraction (Special Fields)
+    if (config.enableSupplierExtraction) {
       if (hasPass2) {
-        dynamicFields = prior!.dynamicFields;
-        logger.info(TAG, `Pass 2 skipped — using existing dynamicFields`, { documentId });
+        specialFields = prior!.specialFields || {};
+        logger.info(TAG, `Pass 2 skipped — using existing specialFields`, { documentId });
       } else {
-        const rawDynamic = await timedPass('Pass 2 Dynamic', () => runPassWithAutoExpand(documentId, DYNAMIC_QUERY, DYNAMIC_PROMPT_FULL, filename));
-        const normalizedDynamic = normalizeDynamicFields(rawDynamic);
-        dynamicFields = normalizedDynamic;
-        await prisma.documentAnalysis.update({ where: { documentId }, data: { status: 'PARTIAL', dynamicFields: normalizedDynamic as any } });
-        logger.info(TAG, `Pass 2 saved (PARTIAL)`, { documentId });
+        logger.info(TAG, `Pass 2 starting — supplier fields`, { documentId });
+        const provider = extractProviderValue(fixedFields);
+        try {
+          const rawSpecial = await timedPass('Pass 2 Supplier', () =>
+            runSupplierPass(documentId, provider, filename)
+          );
+          specialFields = (rawSpecial as any)?.special_fields ?? rawSpecial ?? {};
+          await prisma.documentAnalysis.update({
+            where: { documentId },
+            data: { specialFields: specialFields as any, status: 'PARTIAL' },
+          });
+          logger.info(TAG, `Pass 2 (Supplier) saved (PARTIAL)`, { documentId });
+        } catch (err) {
+          logger.warn(TAG, `Pass 2 failed (non-fatal), skipping supplier fields`, { documentId, err: String(err) });
+        }
       }
     }
 
-    // Pass 3: Supplier-specific extraction (Special Fields)
-    if (config.enableSupplierExtraction) {
-      logger.info(TAG, `Pass 3 starting — supplier fields`, { documentId });
-      const provider = extractProviderValue(fixedFields);
-      try {
-        const rawSpecial = await timedPass('Pass 3 Supplier', () =>
-          runSupplierPass(documentId, provider, filename)
-        );
-        specialFields = (rawSpecial as any)?.special_fields ?? rawSpecial ?? {};
-        await prisma.documentAnalysis.update({
-          where: { documentId },
-          data: { specialFields: specialFields as any, status: 'PARTIAL' },
-        });
-        logger.info(TAG, `Pass 3 (Supplier) saved (PARTIAL)`, { documentId });
-      } catch (err) {
-        logger.warn(TAG, `Pass 3 failed (non-fatal), skipping supplier fields`, { documentId, err: String(err) });
-      }
+    // Pass 3: Dynamic extraction after supplier extraction to avoid duplication
+    if (hasPass3) {
+      dynamicFields = prior!.dynamicFields;
+      logger.info(TAG, `Pass 3 skipped — using existing dynamicFields`, { documentId });
+    } else {
+      const rawDynamic = await timedPass('Pass 3 Dynamic', () =>
+        runDynamicPassWithExclusion(documentId, filename, specialFields)
+      );
+      const normalizedDynamic = normalizeDynamicFields(rawDynamic);
+      dynamicFields = normalizedDynamic;
+      await prisma.documentAnalysis.update({
+        where: { documentId },
+        data: { status: 'PARTIAL', dynamicFields: normalizedDynamic as any },
+      });
+      logger.info(TAG, `Pass 3 saved (PARTIAL)`, { documentId });
     }
 
     // Pass 4: Summary generation
@@ -230,7 +229,13 @@ async function runPass(
   queryText: string,
   promptTemplate: string,
   filename: string,
-  options?: { includeAllChunks?: boolean; chunkTruncate?: number; timeoutMs?: number; chunkLimit?: number }
+  options?: {
+    includeAllChunks?: boolean;
+    chunkTruncate?: number;
+    timeoutMs?: number;
+    chunkLimit?: number;
+    promptReplacements?: Record<string, string>;
+  }
 ): Promise<unknown> {
   const queryEmbedding = await getCachedEmbedding(queryText);
 
@@ -278,7 +283,7 @@ async function runPass(
   const currentDate = new Date().toISOString().split('T')[0];
   const prompt = promptTemplate
     .replace('{currentDate}', currentDate)
-    .replace('{exclusionText}', '')
+    .replace('{exclusionText}', options?.promptReplacements?.exclusionText ?? '')
     .replace('{filename}', filename)
     .replace('{context}', context);
 
@@ -359,12 +364,16 @@ async function runPassWithAutoExpand(
   documentId: string,
   queryText: string,
   promptTemplate: string,
-  filename: string
+  filename: string,
+  options?: { promptReplacements?: Record<string, string> }
 ): Promise<unknown> {
   // Always use the configured target chunk count for a single pass. Do not
   // retry or restart the model run based on how many fields are empty.
   const target = (config as any).targetChunks ?? 15;
-  return runPass(documentId, queryText, promptTemplate, filename, { chunkLimit: target });
+  return runPass(documentId, queryText, promptTemplate, filename, {
+    chunkLimit: target,
+    promptReplacements: options?.promptReplacements,
+  });
 }
 
 async function runSupplierPass(
@@ -372,58 +381,50 @@ async function runSupplierPass(
   supplierRaw: string | null,
   filename: string
 ): Promise<unknown> {
-  // Force use of 'general' mapping for all documents as requested
-  const key = 'general';
-
-  let supplierData: Record<string, unknown> = {};
-  try {
-    const mapping = await import('../data/mapping.json');
-    const mappingData = mapping.default || mapping;
-    supplierData = (mappingData as Record<string, unknown>)[key] as Record<string, unknown> || {};
-    // If specific supplier has no data, fall back to general
-    if (Object.keys(supplierData).length === 0) {
-      supplierData = (mappingData as Record<string, unknown>)['general'] as Record<string, unknown> || {};
-    }
-  } catch {
-    logger.warn(TAG, `No mapping data for supplier, skipping Pass 3`, { key });
-    return {};
-  }
+  const supplierContext = await getSupplierPromptContext(supplierRaw);
+  const { key, supplierData, supplierDisplayName } = supplierContext;
 
   if (Object.keys(supplierData).length === 0) return {};
 
   const fieldList = JSON.stringify(supplierData, null, 2);
   const query = SUPPLIER_QUERIES[key];
-  // No query defined for this key (e.g. 'general') — skip Pass 3
   if (!query) {
-    logger.warn(TAG, `No supplier query for key, skipping Pass 3`, { key });
+    logger.warn(TAG, `No supplier query for key, skipping Pass 2`, { key });
     return {};
   }
-  // Build supplier prompt using the FULL supplier template when available.
-  // Replace JavaScript-style placeholders (${mappingType}, ${supplierDisplayName}) and
-  // append the supplier field list so the model knows exactly which fields to extract.
+
   let promptTemplate = SUPPLIER_PROMPT_FULL || SUPPLIER_PROMPT;
-  // If FULL template is present, inject mapping values and field list; otherwise fall back to old template.
   let prompt = '';
   if (promptTemplate === SUPPLIER_PROMPT_FULL) {
     prompt = promptTemplate
       .replace(/\$\{mappingType\}/g, key)
-      .replace(/\$\{supplierDisplayName\}/g, supplierRaw || 'the provider')
+      .replace(/\$\{supplierDisplayName\}/g, supplierDisplayName)
       + '\n\nSupplier fields:\n' + fieldList;
   } else {
     prompt = SUPPLIER_PROMPT
-      .replace('{SUPPLIER_NAME}', supplierRaw || 'the provider')
+      .replace('{SUPPLIER_NAME}', supplierDisplayName)
       .replace('{mappingType}', key)
       .replace('{SUPPLIER_FIELD_LIST}', fieldList);
   }
 
-  // Debug log for prompt size
-  logger.info(TAG, `Pass 3 prompt prepared`, { promptChars: prompt.length, key });
+  logger.info(TAG, `Pass 2 prompt prepared`, { promptChars: prompt.length, key });
 
   return runPass(documentId, query, prompt, filename);
 }
 
-async function runCombinedPass(documentId: string, filename: string): Promise<unknown> {
-  return runPassWithAutoExpand(documentId, PRE_ANALYSIS_QUERY, PRE_ANALYSIS_PROMPT, filename);
+async function runDynamicPassWithExclusion(
+  documentId: string,
+  filename: string,
+  specialFields: unknown
+): Promise<unknown> {
+  const exclusionList = collectExcludedSpecialFieldNames(specialFields);
+  const exclusionText = exclusionList.length > 0
+    ? `\n\n**IMPORTANT EXCLUSIONS:**\nDo NOT extract the following fields because they were already extracted in the supplier-specific step:\n${exclusionList.map((field) => `- ${field}`).join('\n')}\n\nAvoid fields that are semantically similar to these excluded fields.`
+    : '';
+
+  return runPassWithAutoExpand(documentId, DYNAMIC_QUERY, DYNAMIC_PROMPT_FULL, filename, {
+    promptReplacements: { exclusionText },
+  });
 }
 
 const MAX_RETRIES = 2;
@@ -574,6 +575,59 @@ function extractProviderValue(fixedFields: unknown): string | null {
   return provider?.value ?? null;
 }
 
+async function getSupplierPromptContext(supplierRaw: string | null): Promise<{
+  key: string;
+  supplierData: Record<string, unknown>;
+  supplierDisplayName: string;
+}> {
+  const supplierDisplayName = supplierRaw?.trim() || 'the provider';
+
+  try {
+    const mapping = await import('../data/mapping.json');
+    const mappingData = (mapping.default || mapping) as Record<string, Record<string, unknown>>;
+    const normalized = normalizeSupplierKey(supplierRaw);
+    const key = normalized && mappingData[normalized] ? normalized : 'general';
+    const supplierData = mappingData[key] || mappingData.general || {};
+    return { key, supplierData, supplierDisplayName };
+  } catch (err) {
+    logger.warn(TAG, `No mapping data for supplier, skipping supplier extraction`, {
+      supplierRaw,
+      err: String(err),
+    });
+    return { key: 'general', supplierData: {}, supplierDisplayName };
+  }
+}
+
+function normalizeSupplierKey(value: string | null | undefined): string | null {
+  if (!value) return null;
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function collectExcludedSpecialFieldNames(specialFields: unknown): string[] {
+  if (!specialFields || typeof specialFields !== 'object') return [];
+
+  const excluded = new Set<string>();
+
+  for (const category of Object.values(specialFields as Record<string, unknown>)) {
+    if (!category || typeof category !== 'object') continue;
+    for (const [fieldName, fieldValue] of Object.entries(category as Record<string, unknown>)) {
+      if (!fieldValue || typeof fieldValue !== 'object') continue;
+      const value = (fieldValue as { value?: unknown }).value;
+      if (value == null) continue;
+      const normalizedValue = String(value).trim();
+      if (!normalizedValue || normalizedValue === 'N/A') continue;
+      excluded.add(fieldName);
+    }
+  }
+
+  return [...excluded].sort();
+}
+
 function normalizeFixedFields(raw: unknown): Record<string, { value: string; description?: string; confidence?: number }> {
   if (!raw) return {};
   // If wrapped under fixed_fields key, unwrap
@@ -610,28 +664,105 @@ function applyContractStatusRule(
 ): void {
   const startDate = normalizeIsoDate(fields.start_date?.value);
   const endDate = normalizeIsoDate(fields.end_date?.value);
+  const autoRenewal = String(fields.auto_renewal?.value ?? '').trim().toLowerCase();
+  const today = new Date().toISOString().slice(0, 10);
 
-  if (!startDate || !endDate) {
+  if (endDate) {
+    const status = (!startDate || today >= startDate) && today <= endDate ? 'Active' : 'Inactive';
     fields.contract_status = {
-      value: 'Unknown',
+      value: status,
       confidence: 1,
-      description: 'Contract status is Unknown because start_date or end_date is missing.',
+      description: `Contract status computed from start_date ${startDate ?? 'N/A'}, end_date ${endDate}, and current date ${today}.`,
     };
     return;
   }
 
-  const today = new Date().toISOString().slice(0, 10);
-  const status = today >= startDate && today <= endDate ? 'Active' : 'Inactive';
+  if (autoRenewal === 'yes') {
+    fields.contract_status = {
+      value: 'Active',
+      confidence: 1,
+      description: `Contract status set to Active because end_date is missing and auto_renewal is ${fields.auto_renewal?.value ?? 'Yes'}.`,
+    };
+    return;
+  }
+
+  if (!startDate) {
+    fields.contract_status = {
+      value: 'Unknown',
+      confidence: 1,
+      description: 'Contract status is Unknown because no end_date is available and auto_renewal is not Yes.',
+    };
+    return;
+  }
+
   fields.contract_status = {
-    value: status,
+    value: today >= startDate ? 'Unknown' : 'Inactive',
     confidence: 1,
-    description: `Contract status computed from start_date ${startDate}, end_date ${endDate}, and current date ${today} using start-of-day precision.`,
+    description: `Contract status computed from start_date ${startDate}, missing end_date, and current date ${today}.`,
   };
 }
 
 function normalizeIsoDate(value: string | undefined): string | null {
   if (!value) return null;
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+}
+
+function applyDeterministicFixedFieldOverrides(
+  fields: Record<string, { value: string; description?: string; confidence?: number }>,
+  rawText: string
+): void {
+  if (!rawText) return;
+
+  const text = rawText.replace(/\s+/g, ' ').trim();
+
+  // Override auto_renewal if document has explicit renewal language
+  const hasAutoRenewalLanguage =
+    /automatically\s+renew/i.test(text) ||
+    /automatic\s+renewal/i.test(text) ||
+    /auto-?renewal/i.test(text) ||
+    /shall\s+automatically\s+extend/i.test(text) ||
+    /renew(?:ed|al|s)?\s+one\s+time\s+for/i.test(text);
+
+  if (hasAutoRenewalLanguage) {
+    fields.auto_renewal = {
+      value: 'Yes',
+      confidence: 1,
+      description: 'Deterministic override from explicit auto-renewal clause language in document text.',
+    };
+  }
+
+  // Override renewal_duration_period if found in document
+  const renewalMatch =
+    text.match(/(?:automatically\s+renew(?:ed|al)?|renew(?:ed|al|s)?)(?:[^.\n]{0,160})\bfor\s+(\d+)\s*(year|years|month|months)\b/i) ||
+    text.match(/\bone\s+time\s+for\s+(\d+)\s*(year|years|month|months)\b/i) ||
+    text.match(/\bsuccessive\s+(\d+)[-\s]*(month|months|year|years)\s+periods?\b/i);
+
+  if (renewalMatch) {
+    const count = parseInt(renewalMatch[1], 10);
+    const unit = renewalMatch[2].toLowerCase();
+    if (!Number.isNaN(count)) {
+      const months = unit.startsWith('year') ? count * 12 : count;
+      fields.renewal_duration_period = {
+        value: `${months} months`,
+        confidence: 1,
+        description: 'Deterministic override from renewal duration phrase in document text.',
+      };
+    }
+  }
+}
+
+function isNA(value: string | undefined): boolean {
+  if (!value) return true;
+  const v = value.trim().toUpperCase();
+  return v === '' || v === 'N/A' || v === 'NOT AVAILABLE' || v === 'NONE';
+}
+
+function normalizePartyKey(value: string): string {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function normalizeDynamicFields(raw: unknown): Record<string, Record<string, { value: string; description?: string; confidence?: number }>> {

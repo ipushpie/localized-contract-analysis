@@ -12,6 +12,33 @@ interface AnalysisResultProps {
   summary?: Summary | { summary: Summary } | null;
 }
 
+function toDisplayValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map((item) => toDisplayValue(item)).filter(Boolean).join(', ');
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    return entries.map(([k, v]) => `${k}: ${toDisplayValue(v)}`).join(' | ');
+  }
+  return String(value);
+}
+
+function toFieldValue(input: unknown): FieldValue {
+  if (input && typeof input === 'object' && 'value' in (input as Record<string, unknown>)) {
+    const candidate = input as Record<string, unknown>;
+    return {
+      value: toDisplayValue(candidate.value),
+      description: typeof candidate.description === 'string' ? candidate.description : undefined,
+      confidence: typeof candidate.confidence === 'number' ? candidate.confidence : undefined,
+    };
+  }
+
+  return {
+    value: toDisplayValue(input),
+  };
+}
+
 function ConfidenceDot({ confidence }: { confidence?: number }) {
   if (confidence === undefined || confidence === null) return null;
   // Normalize confidence to 0.0 - 1.0 if caller provided 0-100 scale
@@ -31,28 +58,30 @@ function ConfidenceDot({ confidence }: { confidence?: number }) {
   );
 }
 
-function FieldRow({ label, field }: { label: string; field: FieldValue }) {
+function FieldRow({ label, field }: { label: string; field: unknown }) {
+  const normalizedField = toFieldValue(field);
+
   return (
     <div className="field-grid" style={{ padding: '0.75rem 0', borderBottom: '1px solid var(--border)' }}>
       <div className="field-label" style={{ fontWeight: 600 }}>{label.replace(/_/g, ' ')}</div>
       <div className="field-value">
-        <div style={{ fontWeight: 500 }}>{field.value || 'N/A'}</div>
-        {field.description && (
+        <div style={{ fontWeight: 500 }}>{normalizedField.value || 'N/A'}</div>
+        {normalizedField.description && (
           <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '0.2rem', lineHeight: '1.4' }}>
-            {field.description}
+            {normalizedField.description}
           </div>
         )}
       </div>
-      <div><ConfidenceDot confidence={field.confidence} /></div>
+      <div><ConfidenceDot confidence={normalizedField.confidence} /></div>
     </div>
   );
 }
 
 export function AnalysisResultView({ fixedFields, dynamicFields, specialFields, summary }: AnalysisResultProps) {
   // Normalize field/special functions
-  const normalizeField = (f: FieldValue | SpecialFieldEntry) => {
+  const normalizeField = (f: unknown) => {
     if (!f) return f;
-    const out = { ...f } as any;
+    const out = toFieldValue(f) as any;
     if (typeof out.confidence === 'number') {
       if (out.confidence > 1) out.confidence = Math.min(out.confidence / 100, 1);
     }

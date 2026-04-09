@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "tsc",
-    "dev": "tsx watch src/index.ts",
+    "dev": "PORT=8000 tsx watch src/index.ts",
     "start": "node dist/index.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@kreuzberg/node": "^4.4.2",
-    "@kreuzberg/node-linux-x64-gnu": "^4.4.2",
     "@langchain/textsplitters": "^0.1.0",
     "@prisma/client": "^6.6.0",
     "cors": "^2.8.5",
